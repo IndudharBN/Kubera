@@ -116,7 +116,7 @@ function candleTrend(candles: Candle[], minVwapDist = 0) {
   if (candles.length < 2) return 'FLAT' as const;
 
   // Current ET time — determines which phase of the session we're in
-  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const etMins = etNow.getHours() * 60 + etNow.getMinutes();
 
   // ── Phase 1: 9:30–10:30 AM ET ───────────────────────────────────────────────
@@ -124,18 +124,18 @@ function candleTrend(candles: Candle[], minVwapDist = 0) {
   // EMA9/21 on 200 bars carries yesterday's trend into today's open.
   // Instead: use Gap direction + ORB break — the two signals institutions
   // actually trade off in the opening hour.
-  if (etMins < 10 * 60 + 30) {
+  if (etMins < 10 * 60 + 15) { // <10:15 IST — opening phase (gap+ORB logic)
     const session = sessionCandles(candles);
     if (session.length < 2) return 'FLAT' as const;
 
-    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const todayOpen = session[0].open;
 
     // Yesterday's last close: walk backwards to find most recent non-today bar
     let prevClose = todayOpen;
     for (let i = candles.length - 1; i >= 0; i--) {
       const d = new Date(candles[i].time);
-      if (d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) !== todayET) {
+      if (d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) !== todayET) {
         prevClose = candles[i].close;
         break;
       }
@@ -206,17 +206,17 @@ function computePrevDay(daily: Candle[]): { high: number; low: number; close: nu
 }
 
 function etHour(isoTime: string): number {
-  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
+  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
 }
 
 function etMinute(isoTime: string): number {
-  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
 }
 
 function isPremarket(isoTime: string): boolean {
   const h = etHour(isoTime);
   const m = etMinute(isoTime);
-  return h < 9 || (h === 9 && m < 30);
+  return h < 9 || (h === 9 && m < 15); // pre-open = before 09:15 IST
 }
 
 function computePremarket(one: Candle[]): { high: number; low: number; volume: number } {
@@ -295,7 +295,7 @@ function dataProviderStatus(fetchedAt?: string): MarketDataProviderStatus {
   const ageSeconds = Math.max(0, Math.round((Date.now() - new Date(lastUpdated).getTime()) / 1000));
   const utcMins = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
   const dow = new Date().getUTCDay();
-  const marketClosed = dow === 0 || dow === 6 || utcMins < 13 * 60 + 30 || utcMins >= 20 * 60;
+  const marketClosed = dow === 0 || dow === 6 || utcMins < 3 * 60 + 45 || utcMins >= 10 * 60; // NSE 03:45–10:00 UTC
   const stale = ageSeconds > 90 || marketClosed;
   return {
     provider: 'alpaca',
@@ -339,9 +339,9 @@ function buildRowFromAlpaca(
   // Option C: post-10:15 AM ET, VWAP + 5m trend replaces 15m trend as primary direction.
   // Pre-10:15 AM: VWAP has <8 session bars and drifts — keep 15m trend + gap fallback.
   const [etH, etM] = new Date()
-    .toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false })
+    .toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false })
     .split(':').map(Number);
-  const postVwapGate = etH * 60 + etM >= 10 * 60 + 15;
+  const postVwapGate = etH * 60 + etM >= 10 * 60; // ≥10:00 IST
   const direction: 'BULL' | 'BEAR' | 'NEUTRAL' = postVwapGate
     ? (price > vwap && trend5m === 'UP'   ? 'BULL' :
        price < vwap && trend5m === 'DOWN' ? 'BEAR' :

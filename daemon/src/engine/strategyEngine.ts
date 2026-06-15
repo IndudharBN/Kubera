@@ -221,8 +221,9 @@ function sessionGate(): 'open' | 'blackout' | 'closed' {
   const day = now.getUTCDay();
   if (day === 0 || day === 6) return 'closed';
   const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  if (utcMins < 13 * 60 + 30 || utcMins >= 20 * 60) return 'closed';
-  if (utcMins < 13 * 60 + 45) return 'blackout'; // 9:45 AM ET
+  // NSE 09:15–15:30 IST = 03:45–10:00 UTC; blackout = first 15m (until 09:30 IST = 04:00 UTC)
+  if (utcMins < 3 * 60 + 45 || utcMins >= 10 * 60) return 'closed';
+  if (utcMins < 4 * 60) return 'blackout';
   return 'open';
 }
 
@@ -321,12 +322,12 @@ function openingRange(candles: Candle[], bars = 3) {
 // Needed when candles.five contains prior-day bars prepended for EMA context.
 function todayOpeningRange(candles: Candle[]): ReturnType<typeof openingRange> {
   if (!candles.length) return null;
-  const todayET = new Date(last(candles).time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const todayET = new Date(last(candles).time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   const todayRTH = candles.filter((c) => {
     const d = new Date(c.time);
-    const date = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const date = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const utcMins = d.getUTCHours() * 60 + d.getUTCMinutes();
-    return date === todayET && utcMins >= 13 * 60 + 30;
+    return date === todayET && utcMins >= 3 * 60 + 45;
   });
   return openingRange(todayRTH, 3);
 }
@@ -358,7 +359,7 @@ function rsi14(cls: number[]): number {
 function rthBarCount(candles: Candle[]): number {
   return candles.filter((c) => {
     const d = new Date(c.time);
-    return d.getUTCHours() * 60 + d.getUTCMinutes() >= 13 * 60 + 30;
+    return d.getUTCHours() * 60 + d.getUTCMinutes() >= 3 * 60 + 45;
   }).length;
 }
 
@@ -367,7 +368,7 @@ function adrExhausted(candles: Candle[], atr20: number): boolean {
   if (atr20 <= 0) return false;
   const rth = candles.filter((c) => {
     const d = new Date(c.time);
-    return d.getUTCHours() * 60 + d.getUTCMinutes() >= 13 * 60 + 30;
+    return d.getUTCHours() * 60 + d.getUTCMinutes() >= 3 * 60 + 45;
   });
   if (!rth.length) return false;
   const hi = Math.max(...rth.map((c) => c.high));
@@ -415,10 +416,10 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel), input.atr20);
   // Hard gate: no S1 entries before 10:15 AM ET — ORB structure unreliable, H1 bar not closed,
   // institutional opening flow not absorbed. earlySession (9:45–10:15) still requires higher RVOL.
-  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const etMins = etNow.getHours() * 60 + etNow.getMinutes();
-  const timeGateOk = etMins >= 10 * 60 + 15;
-  const earlySession = etMins >= 9 * 60 + 45 && etMins < 10 * 60 + 15;
+  const timeGateOk = etMins >= 10 * 60;            // ≥10:00 IST (45m after 09:15 open)
+  const earlySession = etMins >= 9 * 60 + 30 && etMins < 10 * 60; // 09:30–10:00 IST
   const rvolMin = earlySession ? 1.5 : 1.0;
   const risk = Math.abs(entry - stop);
   const orRange = range ? range.high - range.low : 0;
@@ -440,8 +441,8 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
     orbWidthOk ? pass('ORB width ≥0.5%', `${round(orbWidthPct * 100, 2)}% ✓`) : fail('ORB width ≥0.5%', `${round(orbWidthPct * 100, 2)}% — degenerate range: no institutional positioning`),
     confirmedBreak ? pass('ORB Breakout', `Clear of noise (+${round(breakoutDistance, 2)})`) : fail('ORB Breakout', `Inside noise floor (${round(minBreakout, 2)})`),
     retest ? pass('Retest hold', 'Breakout level retested and held') : fail('Retest hold', 'Waiting for controlled retest'),
-    timeGateOk ? pass('Time gate ≥10:15 AM', 'ORB structure settled ✓') : fail('Time gate ≥10:15 AM', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} ET — wait for 10:15 AM (H1 close, opening flow absorbed)`),
-    input.rvol >= rvolMin ? pass(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× ✓`) : fail(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× — ${earlySession ? 'early session (9:45–10:15) requires ≥1.5×' : 'ORB breakout requires RTH volume confirmation'}`),
+    timeGateOk ? pass('Time gate ≥10:00 IST', 'ORB structure settled ✓') : fail('Time gate ≥10:00 IST', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} IST — wait for 10:00 IST (opening flow absorbed)`),
+    input.rvol >= rvolMin ? pass(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× ✓`) : fail(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× — ${earlySession ? 'early session (09:30–10:00) requires ≥1.5×' : 'ORB breakout requires RTH volume confirmation'}`),
     pass('ADR room', `${adrExhausted(input.candles.five, input.atr20) ? '>80% ATR used — watch' : '< 80% ATR used ✓'} — informational`),
     pass('VWAP context', `${selfInput.vwapAligned ? 'VWAP ✓' : 'early session'} — informational`),
     ema1mCheck(input),
@@ -790,9 +791,9 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
   const rvolThreshold = fvgPathOnly ? 1.2 : 1.0;                  // FVG solo: 1.2× filters dead-volume days; real fills are quiet absorption, not surges
   const rvolOk = input.rvol >= rvolThreshold;
   const fvgSizeOk = atFvg && gap ? (gap.gapHigh - gap.gapLow) >= input.atr20 * 0.25 : true;
-  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const etMins = etNow.getHours() * 60 + etNow.getMinutes();
-  const lateSession = etMins >= 15 * 60;
+  const lateSession = etMins >= 14 * 60 + 30; // ≥14:30 IST — 1h before 15:30 close
   // OB entries require a rejection candle — price slicing through an OB without a wick/reversal
   // bar means the zone is breaking, not holding. FVG entries don't need it (the gap is the magnet).
   const entryConfirmed = atOb ? obReject : atFvg;
@@ -817,7 +818,7 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
     atFvg && !fvgSizeOk
       ? fail('FVG quality', `Gap too small (< 0.25×ATR) — entry blocked`)
       : atFvg ? pass('FVG quality', `Gap size ok`) : pass('FVG quality', 'OB entry — no FVG required'),
-    lateSession ? fail('Session time', 'After 15:00 ET — no new S5 entries (close-of-day noise)') : pass('Session time', 'Before 15:00 ET ✓'),
+    lateSession ? fail('Session time', 'After 14:30 IST — no new S5 entries (close-of-day noise)') : pass('Session time', 'Before 14:30 IST ✓'),
     pass('5m trend aligned', `${selfInput.trend5m}${selfInput.trendAligned ? ' ✓' : ' — pullback entry phase'} — informational`),
     atOb
       ? (obReject ? pass('OB rejection candle', 'Wick/reversal bar at OB ✓') : fail('OB rejection candle', 'Price through OB without rejection — zone likely breaking, not bouncing'))
@@ -904,11 +905,11 @@ function checkS7VolumeSurge(input: StrategyInput): StrategySignal | null {
   // Mid-session volume baseline: exclude the first 6 RTH bars (9:30–10:00 AM open period).
   // Opening bars carry 3–5× normal volume and inflate the average, making 2× impossible to hit mid-session.
   // Fallback to rolling 20 bars when not enough mid-session history exists.
-  const todayET = new Date(bar.time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const todayET = new Date(bar.time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   const todayRTH = candles.five.filter((c) => {
     const d = new Date(c.time);
-    return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === todayET
-      && d.getUTCHours() * 60 + d.getUTCMinutes() >= 13 * 60 + 30;
+    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayET
+      && d.getUTCHours() * 60 + d.getUTCMinutes() >= 3 * 60 + 45;
   });
   const midSessionBars = todayRTH.length > 7 ? todayRTH.slice(6, -1) : [];
   const volSample = midSessionBars.length >= 4 ? midSessionBars : candles.five.slice(-21, -1);
@@ -1312,8 +1313,8 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
   // Time gate: no S12 entries before 10:45 AM ET (1h15m into the session). A 15m
   // EMA20 trend isn't meaningful until the session has developed. Explicit clock
   // gate, same pattern as S1's 10:15 gate.
-  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const timeGateOk = etNow.getHours() * 60 + etNow.getMinutes() >= 10 * 60 + 45;
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const timeGateOk = etNow.getHours() * 60 + etNow.getMinutes() >= 10 * 60 + 30; // ≥10:30 IST
   const entry = input.price;
   const rawStop = dir === 'BULL'
     ? ema20Now - input.atr20 * STOP_BUFFER_15M
@@ -1344,9 +1345,9 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
     rrOk ? pass('R:R ≥2.0', '✓') : fail('R:R ≥2.0', 'Reward insufficient vs 1×ATR stop'),
     htfTrendContext(selfInput),
     pass('VWAP', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above ✓' : 'Below ✓') : 'misaligned'} — informational`),
-    timeGateOk ? pass('Time gate ≥10:45 AM', '1h15m into session ✓') : fail('Time gate ≥10:45 AM', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} ET — S12 waits until 10:45 (15m trend developed)`),
+    timeGateOk ? pass('Time gate ≥10:30 IST', '1h15m into session ✓') : fail('Time gate ≥10:30 IST', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} IST — S12 waits until 10:30 (15m trend developed)`),
   ];
-  return signal('ema20_bounce_15m', selfInput, checklist, tradePlan, 'S12 15m EMA20 bounce: self-determined direction from 15m EMA20 slope + 45m touch + reclaim + RVOL≥1.0 + R:R≥2.0 + time gate ≥10:45 ET. Hard gates: selfDir (slope ≥0.1% per 1h), touchedEma, reclaimed, rvolOk, rrOk, timeGateOk.');
+  return signal('ema20_bounce_15m', selfInput, checklist, tradePlan, 'S12 15m EMA20 bounce: self-determined direction from 15m EMA20 slope + 45m touch + reclaim + RVOL≥1.0 + R:R≥2.0 + time gate ≥10:30 IST. Hard gates: selfDir (slope ≥0.1% per 1h), touchedEma, reclaimed, rvolOk, rrOk, timeGateOk.');
 }
 
 // ─── S13: Range-Bound Mean Reversion ─────────────────────────────────────────

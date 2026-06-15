@@ -6,8 +6,8 @@ import { STRATEGY_CODES } from './workflowTypes';
 
 export function etMinutesNow(): number {
   const now = new Date();
-  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
   return h * 60 + m;
 }
 

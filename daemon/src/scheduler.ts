@@ -15,43 +15,43 @@ import { loadTrades, saveTrades, appendLedger } from './tradeStore';
 import type { PaperTrade } from './types';
 
 function toETDate(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 function etMinutes(): number {
   const now = new Date();
-  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
   return h * 60 + m;
 }
 
 function isMarketHours(): boolean {
-  const mins = etMinutes();
-  return mins >= 9 * 60 + 30 && mins < 16 * 60;
+  const mins = etMinutes(); // IST minutes (timezone swapped to Asia/Kolkata)
+  return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30; // NSE 09:15–15:30 IST
 }
 
 // Scan window starts pre-market so the dashboard builds the tape before the open.
 // This is display only — trading (executor + monitor) stays gated to isMarketHours,
 // so no entries fire before 9:30 ET.
-const PREMARKET_SCAN_START_MIN = 8 * 60; // 08:00 ET — pre-market scan begins
+const PREMARKET_SCAN_START_MIN = 9 * 60; // 09:00 IST — pre-open session begins
 function isScanWindow(): boolean {
   const mins = etMinutes();
-  return mins >= PREMARKET_SCAN_START_MIN && mins < 16 * 60;
+  return mins >= PREMARKET_SCAN_START_MIN && mins < 15 * 60 + 30;
 }
 
 function isEODWindow(): boolean {
   const mins = etMinutes();
-  return mins >= 15 * 60 + 50; // no upper bound — eodFiredDate guard prevents double-fire
+  return mins >= 15 * 60 + 15; // 15:15 IST force-close (beat broker MIS square-off 15:20)
 }
 
-// Milliseconds until 8:30 AM ET. Returns 0 if already past 8:30.
-function msUntil830ET(): number {
+// Milliseconds until 09:00 IST (pre-open universe rebuild). Returns 0 if already past.
+function msUntilRebuild(): number {
   const now = new Date();
-  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
-  const s = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', second: '2-digit' }), 10);
+  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
+  const s = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', second: '2-digit' }), 10);
   const nowSecs = h * 3600 + m * 60 + s;
-  const targetSecs = 8 * 3600 + 30 * 60;
+  const targetSecs = 9 * 3600; // 09:00 IST
   if (nowSecs >= targetSecs) return 0;
   return (targetSecs - nowSecs) * 1000;
 }
@@ -112,7 +112,7 @@ function tryFireTrades(): void {
   if (!snapshot) return;
 
   const etMins = etMinutes();
-  if (etMins < 9 * 60 + 30 || etMins >= 15 * 60 + 45) return;
+  if (etMins < 9 * 60 + 15 || etMins >= 15 * 60 + 15) return; // 09:15 open → no new entries after 15:15 IST
 
   const trades = loadTrades();
   const state = getState();
@@ -339,16 +339,16 @@ export function startScheduler(): void {
   // existing/startup universe so the dashboard is live, then this refreshes it.
   // If daemon started before 8:30: schedule a one-shot clear+rebuild at exactly 8:30.
   // If daemon started after 8:30: the startup scan already builds today's universe (no action needed).
-  const msToRebuild = msUntil830ET();
+  const msToRebuild = msUntilRebuild();
   if (msToRebuild > 0) {
-    console.log(`[scheduler] universe rebuild scheduled in ${Math.round(msToRebuild / 60_000)}m (8:30 ET)`);
+    console.log(`[scheduler] universe rebuild scheduled in ${Math.round(msToRebuild / 60_000)}m (09:00 IST)`);
     setTimeout(() => {
-      console.log('[scheduler] 8:30 ET — clearing universe cache and rebuilding');
+      console.log('[scheduler] 09:00 IST — clearing universe cache and rebuilding');
       clearUniverseCache();
-      runFullScan().catch((err) => console.error('[universe] 8:30 rebuild error:', err));
+      runFullScan().catch((err) => console.error('[universe] 09:00 rebuild error:', err));
     }, msToRebuild);
   } else {
-    console.log('[scheduler] past 8:30 ET — universe builds on startup scan');
+    console.log('[scheduler] past 09:00 IST — universe builds on startup scan');
   }
 
   console.log('[scheduler] started — intervals armed');
