@@ -117,7 +117,7 @@ export interface ProTradeSnapshot {
 // minVwapDist: minimum fractional distance from session VWAP before calling UP/DOWN.
 // Use 0.001 (10bps) for SPY to prevent flip-flopping on a choppy tape.
 // Use 0 (default) for individual stocks — they need finer-grained trend calls.
-function candleTrend(candles: Candle[], minVwapDist = 0) {
+export function candleTrend(candles: Candle[], minVwapDist = 0) {
   if (candles.length < 2) return 'FLAT' as const;
 
   // Current ET time — determines which phase of the session we're in
@@ -312,7 +312,7 @@ function dataProviderStatus(fetchedAt?: string): MarketDataProviderStatus {
   };
 }
 
-function buildRowFromAlpaca(
+export function buildRowFromAlpaca(
   symbol: string,
   meta: SymbolMeta,
   candleSet: CandleSet,
@@ -388,9 +388,9 @@ function buildRowFromAlpaca(
   }
 
   const failures: string[] = [];
-  if (price < 1 || price > 1500) failures.push('Price outside $1–$1500');
-  if (atrPct < 2.5 || atrPct > 12) failures.push(`ATR% ${atrPct.toFixed(1)}% outside 2.5–12% range`);
-  if (dollarVolM < 3) failures.push('Dollar volume below $3M');
+  if (price < 50 || price > 15000) failures.push('Price outside ₹50–₹15,000');
+  if (atrPct < 1.5 || atrPct > 12) failures.push(`ATR% ${atrPct.toFixed(1)}% outside 1.5–12% range`);
+  if (dollarVolM < 3) failures.push('Turnover below ₹3M');
   const basePass = failures.length === 0;
   const baseReason = failures.length ? failures.join(' | ') : 'Price OK, ATR% OK, dollar vol OK';
 

@@ -13,6 +13,7 @@
     "db:apply": "node scripts/apply-supabase-schema.mjs",
     "build:daemon": "tsc -p daemon/tsconfig.daemon.json",
     "kite:check": "tsc -p daemon/tsconfig.daemon.json && node daemon/dist/kite/smokeTest.js",
+    "bt:nse": "tsc -p daemon/tsconfig.daemon.json && node daemon/dist/backtest/btNse.js",
     "daemon": "node daemon/dist/index.js",
     "daemon:start": "pm2 start ecosystem.config.cjs",
     "daemon:stop": "pm2 stop sutra-daemon",
