@@ -81,8 +81,9 @@ export function buildPaperTrade(
   const budgetCap = availablePaperNotional(currentTrades, accountBalance);
   const notional = Math.min(budgetCap, adjustedNotional);
   if (notional <= 0) return null;
-  const quantity = Math.round((notional / plan.entry) * 10000) / 10000;
+  const quantity = Math.floor(notional / plan.entry); // NSE equity = whole shares only
   if (quantity <= 0) return null;
+  const filledNotional = Math.round(quantity * plan.entry * 100) / 100;
 
   // Cost-aware R:R gate: require ≥1.5R *after* NSE intraday charges (STT/brokerage/GST/…).
   // A 1.5R gross trade can be ~1.2R net on small ₹ tickets — those silently bleed the edge.
@@ -111,7 +112,7 @@ export function buildPaperTrade(
     rr: plan.rr,
     rr1: plan.rr1,
     quantity,
-    notional,
+    notional: filledNotional,
     openedAt,
     reason: (row.primaryStrategy?.reason || row.reason) + heatNote,
     signalGroup: row.primaryStrategy?.signalGroup,

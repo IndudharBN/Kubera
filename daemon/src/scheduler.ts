@@ -6,11 +6,11 @@ import { getState, setState, saveState, applyDayRoll } from './stateStore';
 import { monitorPaperTrades } from './engine/monitorTrades';
 import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
-import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings } from './riskManager';
+import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings, initDailyBalance } from './riskManager';
 import { kiteEnv } from './kite/kiteEnv';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
-import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions } from './broker';
+import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions, cancelPaperOrder } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
@@ -86,6 +86,7 @@ async function syncAccount(): Promise<void> {
       accountEquity = equity;
       updateHwm(equity);
       accountBalance = Math.min(equity, kiteEnv.CAPITAL_CAP_INR); // hard ₹ capital cap
+      initDailyBalance(accountBalance); // seed day-start baseline (idempotent within a day)
     }
   } catch (err) {
     console.warn('[scheduler] account sync failed:', (err as Error).message);
@@ -116,8 +117,13 @@ async function monitorLoop(): Promise<void> {
         emit('trade_closed', after);
         emit('risk_update', { dailyPnl: getState().riskState.dailyRealizedPnl });
         console.log(`[monitor] ${after.symbol} closed — ${after.outcome} pnl=$${after.pnl?.toFixed(2)}`);
+        // OCO: cancel the resting safety SL-M FIRST so it can't fire post-close into a reverse position.
+        if (after.stopOrderId) {
+          cancelPaperOrder(after.stopOrderId).catch((err: Error) =>
+            console.warn(`[broker] stop cancel failed ${after.symbol}:`, err.message));
+        }
         closePaperPosition(after.symbol).catch((err: Error) =>
-          console.warn(`[alpaca] position close failed ${after.symbol}:`, err.message),
+          console.warn(`[broker] position close failed ${after.symbol}:`, err.message),
         );
       }
     }
@@ -242,10 +248,10 @@ function tryFireTrades(): void {
       }).then((order) => {
         const ts = loadTrades();
         const idx = ts.findIndex((t: { id: string }) => t.id === newTrade.id);
-        if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id }; saveTrades(ts); }
-        console.log(`[alpaca] order placed ${newTrade.symbol} id=${order.id}`);
+        if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId }; saveTrades(ts); }
+        console.log(`[broker] order placed ${newTrade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'}`);
       }).catch((err: Error) => {
-        console.warn(`[alpaca] order failed ${newTrade.symbol}:`, err.message);
+        console.warn(`[broker] order failed ${newTrade.symbol}:`, err.message);
       });
     }
 
@@ -269,8 +275,10 @@ function eodClose(): void {
   );
 
   let changed = false;
-  const updated = trades.map((t: { status: string; symbol: string; direction: string; entry: number; quantity: number; notional: number }) => {
+  const updated = trades.map((t: { status: string; symbol: string; direction: string; entry: number; quantity: number; notional: number; stopOrderId?: string }) => {
     if (t.status !== 'Open') return t;
+    // OCO: cancel the resting safety SL-M before the EOD market square-off.
+    if (t.stopOrderId) cancelPaperOrder(t.stopOrderId).catch(() => { /* best-effort */ });
     const price = priceBySymbol.get(t.symbol) ?? t.entry;
     const gross = t.direction === 'BEAR' ? (t.entry - price) * t.quantity : (price - t.entry) * t.quantity;
     changed = true;

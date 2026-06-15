@@ -5,7 +5,7 @@ import { env } from './env';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
 import { getState, setState, saveState } from './stateStore';
 import { getCurrentSnapshot, runFullScan } from './scanLoop';
-import { getPaperAccount, placePaperBracketOrder, closePaperPosition } from './broker';
+import { getPaperAccount, placePaperBracketOrder, closePaperPosition, cancelPaperOrder } from './broker';
 import {
   checkDailyLossLimit,
   getGroupCbSummary,
@@ -221,8 +221,8 @@ app.post('/api/trades/paper', (req, res) => {
   }).then((order) => {
     const ts = loadTrades();
     const idx = ts.findIndex((t) => t.id === trade.id);
-    if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id }; saveTrades(ts); }
-    console.log(`[alpaca] manual order placed ${trade.symbol} id=${order.id}`);
+    if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId }; saveTrades(ts); }
+    console.log(`[broker] manual order placed ${trade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'}`);
   }).catch((err: Error) => console.warn(`[alpaca] manual order failed ${trade.symbol}:`, err.message));
   res.json(trade);
 });
@@ -241,6 +241,7 @@ app.post('/api/trades/:id/close', (req, res) => {
   trades[idx] = closed;
   saveTrades(trades);
   emit('trade_closed', closed);
+  if (closed.stopOrderId) cancelPaperOrder(closed.stopOrderId).catch(() => {}); // OCO: kill the resting stop
   closePaperPosition(closed.symbol).catch(() => {});
   res.json(closed);
 });

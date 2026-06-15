@@ -46,6 +46,7 @@ export interface PaperTrade {
   signalGroup?: SignalGroup;
   beta?: number;
   alpacaOrderId?: string;
+  stopOrderId?: string; // resting Kite SL-M — cancelled when the daemon closes the position (OCO)
 }
 
 export interface RiskSettings {

@@ -2,6 +2,7 @@ import { fetchProTradeScannerSnapshot, fetchHotSetSnapshot } from './engine/proT
 import type { ProTradeSnapshot, ProTradeRow } from './engine/proTradeScannerApi';
 import { barStream } from './barStream';
 import { getState } from './stateStore';
+import { loadTrades } from './tradeStore';
 import { emit } from './httpServer';
 import { getUniverseBuiltAt, isUniverseFallback } from './marketData';
 
@@ -23,7 +24,10 @@ function extractHotSet(rows: ProTradeRow[]): string[] {
 }
 
 export async function runFullScan(): Promise<void> {
-  const watchlist = getState().dayWatchlist.symbols;
+  // Always include open-position symbols so monitorTrades has a live price/VWAP for them
+  // even if they drop out of the dynamic universe (otherwise T1/T2/trail can't run).
+  const openSymbols = loadTrades().filter((t) => t.status === 'Open').map((t) => t.symbol);
+  const watchlist = [...new Set([...getState().dayWatchlist.symbols, ...openSymbols])];
   console.log(`[scan] Full scan — ${watchlist.length} pinned + dynamic universe`);
 
   const snapshot = await fetchProTradeScannerSnapshot(watchlist);
