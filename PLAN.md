@@ -53,7 +53,7 @@ Everything buildable without live creds is committed. Remaining work needs the K
 | Daily token refresh (TOTP auto-login) | ✅ | `kite/kiteLogin.ts`, wired in `index.ts` cold-start |
 | Read-only verifier | ✅ | `npm run kite:check` (`kite/smokeTest.ts`) |
 | Engine (14 strategies, 9-group confluence, risk, monitorTrades) | ✅ untouched | reused from Sutra |
-| Sector-trends + news-catalyst feeds | 🟡 stubbed (TODO) | `kite/kiteData.ts` |
+| Sector-trends (NSE sub-indices) + catalyst (price-action) | ✅ live | `kite/kiteData.ts` |
 | NSE threshold tuning (ADR/RVOL/impulse) | 🔴 pending live data | dry-run phase |
 
 **Commits:** Step 0 baseline → 1a Kite modules → 1b broker/stream/env seams → Phase 3 data/universe →
@@ -68,7 +68,7 @@ legacy fallback. `AUTO_EXECUTE` defaults **off** (shadow-first).
 2. **Verify:** `npm run kite:check` — login → instruments → quotes → RELIANCE/HDFCBANK/INFY candles →
    NIFTY + India VIX (no orders).
 3. **Dry-run:** run the daemon during NSE hours with `DAEMON_AUTO_EXECUTE=false`; confirm the 14
-   strategies fire sane signals; **re-tune NSE thresholds**; wire the two stubbed feeds.
+   strategies fire sane signals; **re-tune NSE thresholds** (ADR/RVOL/impulse) on real data.
 4. **Go live:** flip `AUTO_EXECUTE=true` with the ₹1L caps + shadow-first; then autonomy (wake/restart).
 
 ---

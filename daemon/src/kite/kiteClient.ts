@@ -187,13 +187,28 @@ export interface KiteQuote {
   ohlc: { open: number; high: number; low: number; close: number }; // close = prev-day close
 }
 
-/** Batched quotes for `SYMBOL` keys (NSE) → { SYMBOL: quote }. Kite allows ≤500/call. */
+const _quoteCache = new Map<string, { q: KiteQuote; at: number }>();
+const QUOTE_TTL = 5_000; // dedupe the multiple getQuotes() callers within a scan cycle
+
+/** Batched quotes for `SYMBOL` keys (NSE; also index names like "NIFTY BANK") → { SYMBOL: quote }. */
 export async function getQuotes(symbols: string[]): Promise<Record<string, KiteQuote>> {
   if (!symbols.length) return {};
-  const keys = symbols.map((s) => `NSE:${s.toUpperCase()}`);
-  const resp = (await kc().getQuote(keys)) as unknown as Record<string, KiteQuote>;
   const out: Record<string, KiteQuote> = {};
-  for (const [key, val] of Object.entries(resp)) out[key.replace(/^NSE:/, '')] = val;
+  const fresh: string[] = [];
+  for (const s of symbols) {
+    const key = s.toUpperCase();
+    const c = _quoteCache.get(key);
+    if (c && Date.now() - c.at < QUOTE_TTL) out[key] = c.q; else fresh.push(s);
+  }
+  if (fresh.length) {
+    const keys = fresh.map((s) => `NSE:${s.toUpperCase()}`);
+    const resp = (await kc().getQuote(keys)) as unknown as Record<string, KiteQuote>;
+    for (const [key, val] of Object.entries(resp)) {
+      const sym = key.replace(/^NSE:/, '');
+      out[sym] = val;
+      _quoteCache.set(sym, { q: val, at: Date.now() });
+    }
+  }
   return out;
 }
 
