@@ -3,6 +3,7 @@ import { env } from './env';
 import { loadState, saveState, getState } from './stateStore';
 import { startScheduler } from './scheduler';
 import { startHttpServer } from './httpServer';
+import { ensureKiteLogin } from './kite/kiteLogin';
 
 // Safety net: a transient network timeout (AbortSignal.timeout) or any stray async
 // rejection must never hard-kill the trading daemon. Node 24 crashes the process on
@@ -30,6 +31,11 @@ async function main() {
 
   saveState();
   console.log(`[kubera-daemon] state saved to disk ✓`);
+
+  // Refresh the daily Kite token before arming the scheduler (best-effort; warns if absent).
+  if (env.BROKER === 'kite') {
+    await ensureKiteLogin().catch((e) => console.error('[kite] ensureKiteLogin error:', (e as Error).message));
+  }
 
   const s = getState();
   console.log(`[kubera-daemon] ready at ${toISTTime()} IST`);

@@ -21,6 +21,11 @@ export const kiteEnv = {
   API_SECRET:    process.env['KITE_API_SECRET'] ?? '',
   ACCESS_TOKEN:  process.env['KITE_ACCESS_TOKEN'] ?? '',
 
+  // For unattended daily auto-login (TOTP). Optional — if absent, set ACCESS_TOKEN manually.
+  USER_ID:       process.env['KITE_USER_ID'] ?? '',
+  PASSWORD:      process.env['KITE_PASSWORD'] ?? '',
+  TOTP_SECRET:   process.env['KITE_TOTP_SECRET'] ?? '',
+
   // India trading config (₹1L intraday MIS @ 1× by default)
   PRODUCT:          (process.env['KITE_PRODUCT'] as KiteProduct) ?? 'MIS',
   CAPITAL_CAP_INR:  parseFloat(process.env['CAPITAL_CAP_INR'] ?? '100000'),
