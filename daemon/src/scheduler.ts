@@ -117,12 +117,14 @@ async function monitorLoop(): Promise<void> {
         emit('trade_closed', after);
         emit('risk_update', { dailyPnl: getState().riskState.dailyRealizedPnl });
         console.log(`[monitor] ${after.symbol} closed — ${after.outcome} pnl=$${after.pnl?.toFixed(2)}`);
-        // OCO: cancel the resting safety SL-M FIRST so it can't fire post-close into a reverse position.
+        // OCO (sequenced to remove the cancel/close race): await the SL-M cancel FIRST,
+        // then square off. closePaperPosition is position-aware (reads live qty), so even
+        // if the SL-M already filled, the close is a no-op — no double-fill, no orphan.
         if (after.stopOrderId) {
-          cancelPaperOrder(after.stopOrderId).catch((err: Error) =>
+          await cancelPaperOrder(after.stopOrderId).catch((err: Error) =>
             console.warn(`[broker] stop cancel failed ${after.symbol}:`, err.message));
         }
-        closePaperPosition(after.symbol).catch((err: Error) =>
+        await closePaperPosition(after.symbol).catch((err: Error) =>
           console.warn(`[broker] position close failed ${after.symbol}:`, err.message),
         );
       }
@@ -263,7 +265,7 @@ function tryFireTrades(): void {
   if (tradesFired) saveTrades(trades);
 }
 
-function eodClose(): void {
+async function eodClose(): Promise<void> {
   const state = getState();
   const today = toETDate();
   if (state.eodFiredDate === today) return;
@@ -277,8 +279,6 @@ function eodClose(): void {
   let changed = false;
   const updated = trades.map((t: { status: string; symbol: string; direction: string; entry: number; quantity: number; notional: number; stopOrderId?: string }) => {
     if (t.status !== 'Open') return t;
-    // OCO: cancel the resting safety SL-M before the EOD market square-off.
-    if (t.stopOrderId) cancelPaperOrder(t.stopOrderId).catch(() => { /* best-effort */ });
     const price = priceBySymbol.get(t.symbol) ?? t.entry;
     const gross = t.direction === 'BEAR' ? (t.entry - price) * t.quantity : (price - t.entry) * t.quantity;
     changed = true;
@@ -298,9 +298,12 @@ function eodClose(): void {
 
   if (changed) {
     saveTrades(updated as PaperTrade[]);
+    // OCO: cancel every resting SL-M BEFORE the market square-off so none can orphan.
+    const stopIds = trades.filter((t) => t.status === 'Open' && t.stopOrderId).map((t) => t.stopOrderId!);
+    await Promise.allSettled(stopIds.map((id) => cancelPaperOrder(id)));
     console.log('[eod] all open trades closed at market');
-    closeAllPaperPositions().catch((err: Error) =>
-      console.warn('[alpaca] EOD closeAll failed:', err.message),
+    await closeAllPaperPositions().catch((err: Error) =>
+      console.warn('[eod] closeAll failed:', err.message),
     );
   }
 
@@ -333,7 +336,7 @@ export function startScheduler(): void {
   // If daemon starts after market close and missed the EOD window, close open trades now
   if (isEODWindow()) {
     console.log('[scheduler] post-market startup — running missed EOD close');
-    eodClose();
+    eodClose().catch((err) => console.error('[eod] startup close error:', err));
   }
 
   // Full scan every 60s across the scan window (pre-market 8:00 ET → close).
@@ -378,7 +381,7 @@ export function startScheduler(): void {
 
   // EOD close check every 30s
   setInterval(() => {
-    if (isEODWindow()) eodClose();
+    if (isEODWindow()) eodClose().catch((err) => console.error('[eod] close error:', err));
   }, 30_000);
 
   // State save every 30s
