@@ -27,6 +27,17 @@ function etMinutes(): number {
   return h * 60 + m;
 }
 
+// Regime router: which strategies may fire in the current NIFTY regime.
+// Trend (BULL/BEAR) → disable mean-reversion (S13). Range (SIDEWAYS) → suppress
+// breakouts (S1 ORB, S6 MSS, S9 Flag, S7 Volume-surge). Everything else allowed.
+const MEAN_REVERSION_IDS = new Set<string>(['range_reversion']);
+const BREAKOUT_IDS = new Set<string>(['orb_retest', 'mss_breakout', 'flag_break', 's7_volume_surge']);
+function regimeAllows(strategyId: string | null, regime: 'BULL' | 'SIDEWAYS' | 'BEAR'): boolean {
+  if (!strategyId) return true;
+  if (regime === 'SIDEWAYS') return !BREAKOUT_IDS.has(strategyId);
+  return !MEAN_REVERSION_IDS.has(strategyId);
+}
+
 function isMarketHours(): boolean {
   if (isNseHoliday(istDate())) return false; // NSE trading holiday
   const mins = etMinutes(); // IST minutes (timezone swapped to Asia/Kolkata)
@@ -123,14 +134,21 @@ function tryFireTrades(): void {
   if (!snapshot) return;
 
   const etMins = etMinutes();
-  if (etMins < 9 * 60 + 15 || etMins >= 15 * 60 + 15) return; // 09:15 open → no new entries after 15:15 IST
+  // Skip the opening 15 min (09:15–09:30 IST — gap-violent, wide spreads); no new entries after 15:15.
+  if (etMins < 9 * 60 + 30 || etMins >= 15 * 60 + 15) return;
 
   // Global drawdown kill (real equity vs HWM) + daily profit protection (capped balance)
   const dd = checkDrawdownKill(accountEquity);
   if (!dd.ok) { console.log(`[executor] ${dd.reason}`); return; }
   const profit = checkDailyProfit(accountBalance);
   if (profit.stopForDay) { console.log(`[executor] profit protect — ${profit.reason}`); return; }
-  const profitSizeMult = profit.halveSize ? 0.5 : 1.0;
+
+  // Regime + India-VIX: stand down on extreme VIX, half size on elevated VIX, apply regime size.
+  const regimeName = snapshot.regime.regime;
+  const vix = snapshot.regime.vixLevel ?? null;
+  if (vix !== null && vix > 30) { console.log(`[executor] India VIX ${vix} > 30 — standing down`); return; }
+  const vixMult = vix !== null && vix > 20 ? 0.5 : 1.0;
+  const sizeMult = (profit.halveSize ? 0.5 : 1.0) * vixMult * snapshot.regime.sizeMult;
 
   const trades = loadTrades();
   const state = getState();
@@ -144,10 +162,21 @@ function tryFireTrades(): void {
     const sig = row.primaryStrategy;
     if (!sig) continue;
 
-    // Concurrency caps: max total positions + max 2 open per strategy
+    // Regime router: trend (BULL/BEAR) disables mean-reversion (S13);
+    // range (SIDEWAYS) suppresses breakouts (S1/S6/S9/S7).
+    if (!regimeAllows(sig.strategyId, regimeName)) {
+      console.log(`[executor] ${row.symbol} ${sig.strategyId} blocked by ${regimeName} regime`);
+      continue;
+    }
+
+    // Concurrency caps: max total + max 2 per strategy + max 2 per direction (net exposure)
     const openNow = trades.filter((t: { status: string }) => t.status === 'Open');
     if (openNow.length >= getRiskSettings().maxPositions) break;
     if (sig.strategyId && openNow.filter((t: { strategyId: string | null }) => t.strategyId === sig.strategyId).length >= 2) continue;
+    if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 2) {
+      console.log(`[executor] ${row.symbol} net-direction cap (≥2 ${sig.direction}) — correlated, skip`);
+      continue;
+    }
 
     if (isTideBlocked(row, snapshot.spyTrend5m, snapshot.spyTrend15m, sig)) {
       console.log(`[executor] ${row.symbol} tide blocked`);
@@ -180,7 +209,7 @@ function tryFireTrades(): void {
 
     if (!canPaperTradeRow(row, trades, accountBalance)) continue;
 
-    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.spyTrend5m, snapshot.spyTrend15m, profitSizeMult);
+    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.spyTrend5m, snapshot.spyTrend15m, sizeMult);
     if (!newTrade) continue;
 
     const betaCheck = checkPortfolioBeta(

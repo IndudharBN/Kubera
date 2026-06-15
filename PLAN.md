@@ -52,6 +52,7 @@ Everything buildable without live creds is committed. Remaining work needs the K
 | Session clock + all strategy time-gates + day-roll | ✅ IST | `scheduler.ts`, `strategyEngine.ts`, `proTradeScannerApi.ts`, `buildPaperTrade.ts`, `riskManager.ts`, `stateStore.ts` |
 | Risk: −3% daily / −10% HWM-drawdown kills, +2/+3% profit-protect, max 3 + 2/strategy, 70% deploy, ₹ capital cap, order throttle | ✅ wired | `types.ts`, `riskManager.ts`, `scheduler.ts` |
 | Cost-aware net R:R (≥1.5R after STT/brokerage/GST) + NSE holiday calendar | ✅ | `nse.ts`, `buildPaperTrade.ts` |
+| **Strategy/regime rules:** skip first 15m (09:15–09:30); S3 no-solo (needs partner); regime router (trend→disable S13, range→suppress S1/S6/S9/S7); India-VIX >20 half-size / >30 stand-down; max 2 per direction | ✅ | `scheduler.ts`, `proTradeScannerApi.ts` |
 | Daily token refresh (TOTP auto-login) | ✅ | `kite/kiteLogin.ts`, wired in `index.ts` cold-start |
 | Read-only verifier | ✅ | `npm run kite:check` (`kite/smokeTest.ts`) |
 | Engine (14 strategies, 9-group confluence, risk, monitorTrades) | ✅ untouched | reused from Sutra |

@@ -7,7 +7,7 @@ import type { Candle, CandleSet } from './ohlcv';
 import { closes, last, round } from './ohlcv';
 import { evaluateStrategies } from './strategyEngine';
 import { stampGroupClassification } from './confluenceClassifier';
-import type { MarketDataProviderStatus, StrategySignal, WorkflowStage } from './workflowTypes';
+import type { MarketDataProviderStatus, StrategyId, StrategySignal, WorkflowStage } from './workflowTypes';
 import { workflowStageRank } from './workflowTypes';
 import { getRiskSettings } from '../riskManager';
 import { computeBeta } from '../portfolioRisk';
@@ -22,10 +22,14 @@ function capScoutSignals(signals: StrategySignal[]): StrategySignal[] {
   const aboveForming = new Set(
     signals.filter(s => workflowStageRank(s.stage) > FORMING_RANK).map(s => s.strategyId)
   );
+  // S3 (rs_continuation) is no longer allowed to trade solo — it needs a structural
+  // partner (15m OB / 5m OB / 1m sniper / ORB) above forming, like the other scouts.
+  const S3_PARTNERS: StrategyId[] = ['orb15m_retest', 'ob_fvg_retest', 'sniper_1m', 'orb_retest'];
   return signals.map(s => {
     const needsPartner =
       (s.strategyId === 'flag_break'       && !aboveForming.has('orb_retest')) ||
-      (s.strategyId === 's7_volume_surge'  && !aboveForming.has('ema20_bounce'));
+      (s.strategyId === 's7_volume_surge'  && !aboveForming.has('ema20_bounce')) ||
+      (s.strategyId === 'rs_continuation'  && !S3_PARTNERS.some(p => aboveForming.has(p)));
     if (needsPartner && workflowStageRank(s.stage) > FORMING_RANK) {
       return { ...s, stage: 'forming' as WorkflowStage, tradePlan: null };
     }
