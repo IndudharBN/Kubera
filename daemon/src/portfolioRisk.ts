@@ -1,5 +1,5 @@
 import type { Candle } from './engine/ohlcv';
-import { SYMBOL_SECTOR } from './alpacaClient';
+import { SYMBOL_SECTOR } from './marketData';
 
 function dailyReturns(candles: Candle[]): number[] {
   const out: number[] = [];

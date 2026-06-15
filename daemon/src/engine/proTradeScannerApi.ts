@@ -1,7 +1,7 @@
-import { fetchBars, fetchYahooDailyBars, fetchUniverseMeta, buildCandleSet, selectTopSymbols, fetchNewsFlags, fetchSectorTrends, fetchSpyDailyBars, buildDynamicUniverse, clearUniverseCache, getUniverseBuiltAt, SYMBOL_SECTOR, UNIVERSE_TARGET, type CatalystTier } from '../alpacaClient';
+import { fetchBars, fetchYahooDailyBars, fetchUniverseMeta, buildCandleSet, selectTopSymbols, fetchNewsFlags, fetchSectorTrends, fetchSpyDailyBars, buildDynamicUniverse, clearUniverseCache, getUniverseBuiltAt, SYMBOL_SECTOR, UNIVERSE_TARGET, type CatalystTier } from '../marketData';
 import { classifyMarketRegime } from './marketRegimeLogic';
 import type { MarketRegime } from './marketRegimeTypes';
-import type { SymbolMeta } from '../alpacaClient';
+import type { SymbolMeta } from '../marketData';
 import { ema, sessionCandles, sessionVwap, sessionVwapSlope } from './indicators';
 import type { Candle, CandleSet } from './ohlcv';
 import { closes, last, round } from './ohlcv';

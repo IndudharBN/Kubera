@@ -1,6 +1,6 @@
 import { runFullScan, runHotSetScan, getCurrentSnapshot } from './scanLoop';
 import { clearUniverseCache } from './engine/proTradeScannerApi';
-import { isUniverseFallback, clearUniverseCache as clearUniverseCacheClient } from './alpacaClient';
+import { isUniverseFallback, clearUniverseCache as clearUniverseCacheClient } from './marketData';
 import { barStream } from './barStream';
 import { getState, setState, saveState, applyDayRoll } from './stateStore';
 import { monitorPaperTrades } from './engine/monitorTrades';

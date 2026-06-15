@@ -3,7 +3,7 @@ import type { ProTradeSnapshot, ProTradeRow } from './engine/proTradeScannerApi'
 import { barStream } from './barStream';
 import { getState } from './stateStore';
 import { emit } from './httpServer';
-import { getUniverseBuiltAt, isUniverseFallback } from './alpacaClient';
+import { getUniverseBuiltAt, isUniverseFallback } from './marketData';
 
 let currentSnapshot: ProTradeSnapshot | null = null;
 

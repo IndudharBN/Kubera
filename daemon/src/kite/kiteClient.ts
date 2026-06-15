@@ -142,14 +142,20 @@ interface RawHistCandle {
   volume: number;
 }
 
-export async function getCandles(
-  symbol: string,
+// Well-known NSE index instrument tokens (stable) — used for benchmark + VIX,
+// which are NOT in the EQ instrument map.
+export const INDEX_TOKENS = {
+  NIFTY50: 256265,
+  BANKNIFTY: 260105,
+  INDIAVIX: 264969,
+} as const;
+
+export async function getCandlesByToken(
+  token: number,
   interval: Interval,
   fromDate: Date,
   toDate: Date,
 ): Promise<Candle[]> {
-  const token = resolveToken(symbol);
-  if (token === null) return [];
   const rows = (await kc().getHistoricalData(
     token, KITE_INTERVAL[interval], fromDate, toDate,
   )) as unknown as RawHistCandle[];
@@ -161,6 +167,34 @@ export async function getCandles(
     close: r.close,
     volume: r.volume,
   }));
+}
+
+export async function getCandles(
+  symbol: string,
+  interval: Interval,
+  fromDate: Date,
+  toDate: Date,
+): Promise<Candle[]> {
+  const token = resolveToken(symbol);
+  if (token === null) return [];
+  return getCandlesByToken(token, interval, fromDate, toDate);
+}
+
+// ── Full quote (price + day OHLC + cumulative volume) ─────────────────────────
+export interface KiteQuote {
+  last_price: number;
+  volume: number;
+  ohlc: { open: number; high: number; low: number; close: number }; // close = prev-day close
+}
+
+/** Batched quotes for `SYMBOL` keys (NSE) → { SYMBOL: quote }. Kite allows ≤500/call. */
+export async function getQuotes(symbols: string[]): Promise<Record<string, KiteQuote>> {
+  if (!symbols.length) return {};
+  const keys = symbols.map((s) => `NSE:${s.toUpperCase()}`);
+  const resp = (await kc().getQuote(keys)) as unknown as Record<string, KiteQuote>;
+  const out: Record<string, KiteQuote> = {};
+  for (const [key, val] of Object.entries(resp)) out[key.replace(/^NSE:/, '')] = val;
+  return out;
 }
 
 // ── Live quote / LTP ──────────────────────────────────────────────────────────

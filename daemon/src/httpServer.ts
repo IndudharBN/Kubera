@@ -11,7 +11,7 @@ import {
   getGroupCbSummary,
   unpauseGroupCb,
 } from './riskManager';
-import { getUniverseBuiltAt, isUniverseFallback, clearUniverseCache } from './alpacaClient';
+import { getUniverseBuiltAt, isUniverseFallback, clearUniverseCache } from './marketData';
 import { closePaperTrade } from './engine/monitorTrades';
 import type { PaperTrade } from './types';
 import type { SignalGroup } from './types';
