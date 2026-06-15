@@ -1,8 +1,9 @@
 import type { PaperTrade } from '../types';
 import type { ProTradeRow } from './proTradeScannerApi';
-import { computeNotional } from '../riskManager';
+import { computeNotional, getRiskSettings } from '../riskManager';
 import { betaAdjustedSizingMult } from '../portfolioRisk';
 import { STRATEGY_CODES } from './workflowTypes';
+import { nseRoundTripCost } from '../nse';
 
 export function etMinutesNow(): number {
   const now = new Date();
@@ -19,7 +20,7 @@ export function effectiveTradePlan(row: ProTradeRow) {
 }
 
 export function availablePaperNotional(trades: PaperTrade[], accountBalance: number): number {
-  const cap = accountBalance * 0.65;
+  const cap = accountBalance * getRiskSettings().deployCapPct;
   const openNotional = trades
     .filter((t) => t.status === 'Open')
     .reduce((total, t) => total + (t.t1HitAt ? t.notional * 0.5 : t.notional), 0);
@@ -82,6 +83,14 @@ export function buildPaperTrade(
   if (notional <= 0) return null;
   const quantity = Math.round((notional / plan.entry) * 10000) / 10000;
   if (quantity <= 0) return null;
+
+  // Cost-aware R:R gate: require ≥1.5R *after* NSE intraday charges (STT/brokerage/GST/…).
+  // A 1.5R gross trade can be ~1.2R net on small ₹ tickets — those silently bleed the edge.
+  const grossReward = Math.abs(plan.target2 - plan.entry) * quantity;
+  const grossRisk = Math.abs(plan.entry - plan.stop) * quantity;
+  const cost = nseRoundTripCost(plan.entry, quantity);
+  const netRR = (grossReward - cost) / (grossRisk + cost);
+  if (!Number.isFinite(netRR) || netRR < 1.5) return null;
 
   return {
     id: `paper-${row.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

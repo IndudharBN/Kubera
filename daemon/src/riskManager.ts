@@ -10,8 +10,8 @@ const LAYER2_WR_THRESHOLD = 0.58;
 const LAYER3_WINDOW = 40;
 const LAYER3_WR_THRESHOLD = 0.57;
 
-function toETDate(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+function toISTDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 function load(): RiskState {
@@ -43,7 +43,7 @@ export const DEFAULT_RISK_SETTINGS_EXPORT = DEFAULT_RISK_SETTINGS;
 
 export function initDailyBalance(accountBalance: number): void {
   const state = load();
-  const today = toETDate();
+  const today = toISTDate();
   if (state.dailyDate !== today) {
     const resetCb: Record<string, CbState> = {};
     for (const [key, cb] of Object.entries(state.strategyCb)) {
@@ -169,6 +169,38 @@ export function checkDailyLossLimit(accountBalance: number): { ok: boolean; reas
     return { ok: false, reason: `Daily loss limit hit: -$${loss.toFixed(0)} (limit $${limit.toFixed(0)})` };
   }
   return { ok: true };
+}
+
+// ── Equity high-water mark + global drawdown kill ─────────────────────────────
+export function updateHwm(equity: number): void {
+  if (!(equity > 0)) return;
+  const state = load();
+  const hwm = Math.max(state.hwmBalance ?? equity, equity);
+  if (hwm !== state.hwmBalance) save({ ...state, hwmBalance: hwm });
+}
+
+export function checkDrawdownKill(equity: number): { ok: boolean; reason?: string } {
+  const state = load();
+  const hwm = state.hwmBalance ?? equity;
+  const { maxDrawdownPct } = getRiskSettings();
+  if (hwm > 0 && equity <= hwm * (1 - maxDrawdownPct)) {
+    return { ok: false, reason: `Max drawdown kill: equity ₹${equity.toFixed(0)} ≤ ${((1 - maxDrawdownPct) * 100).toFixed(0)}% of HWM ₹${hwm.toFixed(0)}` };
+  }
+  return { ok: true };
+}
+
+// ── Daily profit protection (lock a green day) ────────────────────────────────
+export function checkDailyProfit(accountBalance: number): { stopForDay: boolean; halveSize: boolean; reason?: string } {
+  const state = load();
+  const { dailyProfitHalfPct, dailyProfitStopPct } = getRiskSettings();
+  const pnl = state.dailyRealizedPnl || 0;
+  if (pnl >= accountBalance * dailyProfitStopPct) {
+    return { stopForDay: true, halveSize: false, reason: `+₹${pnl.toFixed(0)} ≥ ${(dailyProfitStopPct * 100).toFixed(1)}% — day locked` };
+  }
+  if (pnl >= accountBalance * dailyProfitHalfPct) {
+    return { stopForDay: false, halveSize: true, reason: `+₹${pnl.toFixed(0)} ≥ ${(dailyProfitHalfPct * 100).toFixed(1)}% — half size` };
+  }
+  return { stopForDay: false, halveSize: false };
 }
 
 export function computeNotional(

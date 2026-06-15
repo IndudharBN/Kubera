@@ -54,14 +54,23 @@ export interface RiskSettings {
   maxPositions: number;
   cbLossThreshold: number;
   disabledStrategies: string[];
+  deployCapPct: number;        // max combined open notional as fraction of capital
+  dailyProfitHalfPct: number;  // at +X% day P&L → halve new-trade size
+  dailyProfitStopPct: number;  // at +X% day P&L → stop new entries for the day
+  maxDrawdownPct: number;      // global kill: equity ≤ HWM×(1−X) → halt
 }
 
+// Kubera ₹1L intraday defaults (tightened from Sutra's US numbers).
 export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   riskPerTradePct: 0.03,
-  dailyLossLimitPct: 0.08,
-  maxPositions: 5,
+  dailyLossLimitPct: 0.03,   // −3% daily-loss kill
+  maxPositions: 3,           // max concurrent total
   cbLossThreshold: 3,
   disabledStrategies: [],
+  deployCapPct: 0.70,        // ≤70% of capital deployed
+  dailyProfitHalfPct: 0.02,  // +2% → half size
+  dailyProfitStopPct: 0.03,  // +3% → done for the day
+  maxDrawdownPct: 0.10,      // −10% from high-water mark → full stop
 };
 
 export interface CbState {
@@ -83,6 +92,7 @@ export interface RiskState {
   dailyRealizedPnl: number;
   strategyCb: Record<string, CbState>;
   groupCb: Partial<Record<SignalGroup, GroupCbState>>;
+  hwmBalance?: number; // equity high-water mark (persists across days) for the drawdown kill
 }
 
 export interface DaemonState {

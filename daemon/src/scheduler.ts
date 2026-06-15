@@ -6,7 +6,9 @@ import { getState, setState, saveState, applyDayRoll } from './stateStore';
 import { monitorPaperTrades } from './engine/monitorTrades';
 import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
-import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult } from './riskManager';
+import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings } from './riskManager';
+import { kiteEnv } from './kite/kiteEnv';
+import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
 import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions } from './broker';
 import { env } from './env';
@@ -26,6 +28,7 @@ function etMinutes(): number {
 }
 
 function isMarketHours(): boolean {
+  if (isNseHoliday(istDate())) return false; // NSE trading holiday
   const mins = etMinutes(); // IST minutes (timezone swapped to Asia/Kolkata)
   return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30; // NSE 09:15–15:30 IST
 }
@@ -35,6 +38,7 @@ function isMarketHours(): boolean {
 // so no entries fire before 9:30 ET.
 const PREMARKET_SCAN_START_MIN = 9 * 60; // 09:00 IST — pre-open session begins
 function isScanWindow(): boolean {
+  if (isNseHoliday(istDate())) return false;
   const mins = etMinutes();
   return mins >= PREMARKET_SCAN_START_MIN && mins < 15 * 60 + 30;
 }
@@ -59,12 +63,19 @@ function msUntilRebuild(): number {
 let fullScanRunning = false;
 let hotScanRunning = false;
 let monitorRunning = false;
-let accountBalance = 100_000;
+let accountBalance = 100_000;   // capped at CAPITAL_CAP_INR — drives sizing
+let accountEquity = 100_000;    // real broker equity — drives the drawdown kill
+let lastOrderAt = 0;            // order-rate throttle
 
 async function syncAccount(): Promise<void> {
   try {
     const account = await getPaperAccount();
-    accountBalance = parseFloat(account.equity);
+    const equity = parseFloat(account.equity);
+    if (Number.isFinite(equity) && equity > 0) {
+      accountEquity = equity;
+      updateHwm(equity);
+      accountBalance = Math.min(equity, kiteEnv.CAPITAL_CAP_INR); // hard ₹ capital cap
+    }
   } catch (err) {
     console.warn('[scheduler] account sync failed:', (err as Error).message);
   }
@@ -114,6 +125,13 @@ function tryFireTrades(): void {
   const etMins = etMinutes();
   if (etMins < 9 * 60 + 15 || etMins >= 15 * 60 + 15) return; // 09:15 open → no new entries after 15:15 IST
 
+  // Global drawdown kill (real equity vs HWM) + daily profit protection (capped balance)
+  const dd = checkDrawdownKill(accountEquity);
+  if (!dd.ok) { console.log(`[executor] ${dd.reason}`); return; }
+  const profit = checkDailyProfit(accountBalance);
+  if (profit.stopForDay) { console.log(`[executor] profit protect — ${profit.reason}`); return; }
+  const profitSizeMult = profit.halveSize ? 0.5 : 1.0;
+
   const trades = loadTrades();
   const state = getState();
   let tradesFired = false;
@@ -121,9 +139,15 @@ function tryFireTrades(): void {
   for (const row of snapshot.rows) {
     if (!row.qualified || !row.tradePlan) continue;
     if (state.firedToday.includes(row.symbol)) continue;
+    if (Date.now() - lastOrderAt < 2500) break; // order-rate throttle (≤1 entry / ~2.5s)
 
     const sig = row.primaryStrategy;
     if (!sig) continue;
+
+    // Concurrency caps: max total positions + max 2 open per strategy
+    const openNow = trades.filter((t: { status: string }) => t.status === 'Open');
+    if (openNow.length >= getRiskSettings().maxPositions) break;
+    if (sig.strategyId && openNow.filter((t: { strategyId: string | null }) => t.strategyId === sig.strategyId).length >= 2) continue;
 
     if (isTideBlocked(row, snapshot.spyTrend5m, snapshot.spyTrend15m, sig)) {
       console.log(`[executor] ${row.symbol} tide blocked`);
@@ -156,7 +180,7 @@ function tryFireTrades(): void {
 
     if (!canPaperTradeRow(row, trades, accountBalance)) continue;
 
-    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.spyTrend5m, snapshot.spyTrend15m);
+    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.spyTrend5m, snapshot.spyTrend15m, profitSizeMult);
     if (!newTrade) continue;
 
     const betaCheck = checkPortfolioBeta(
@@ -172,6 +196,7 @@ function tryFireTrades(): void {
 
     trades.push(newTrade);
     tradesFired = true;
+    lastOrderAt = Date.now(); // throttle spacing for the next entry
     emit('trade_opened', newTrade);
     console.log(`[executor] FIRE ${row.symbol} ${sig.strategyId} ${row.direction} entry=${newTrade.entry} stop=${newTrade.stop} target=${newTrade.target} qty=${newTrade.quantity} notional=$${newTrade.notional.toFixed(0)}`);
 

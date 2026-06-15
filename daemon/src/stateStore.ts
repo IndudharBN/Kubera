@@ -5,8 +5,8 @@ import { DEFAULT_RISK_SETTINGS } from './types';
 
 const STATE_FILE = path.join(__dirname, '../../data/daemon-state.json');
 
-function toETDate(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+function toISTDate(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 function defaultState(): DaemonState {
@@ -17,6 +17,7 @@ function defaultState(): DaemonState {
       dailyRealizedPnl: 0,
       strategyCb: {},
       groupCb: {},
+      hwmBalance: 0,
     },
     riskSettings: { ...DEFAULT_RISK_SETTINGS },
     firedToday: [],
@@ -27,10 +28,10 @@ function defaultState(): DaemonState {
 }
 
 export function applyDayRoll(state: DaemonState): DaemonState {
-  const today = toETDate();
+  const today = toISTDate();
   if (state.riskState.dailyDate === today) return state;
 
-  // New ET day: reset daily P&L, firedToday, eodFiredDate.
+  // New IST day: reset daily P&L, firedToday, eodFiredDate.
   // Preserve pauseUntil on CB entries so a late-session CB still blocks early next morning.
   const resetStrategyCb: DaemonState['riskState']['strategyCb'] = {};
   for (const [key, cb] of Object.entries(state.riskState.strategyCb)) {
