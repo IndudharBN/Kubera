@@ -39,6 +39,40 @@ hot path. The official Node Kite client removes the only reason those were ever 
 
 ---
 
+## Implementation status (BUILT — branch `india-nse`)
+
+The full code port is done and builds clean (`tsc` exit 0); the engine is byte-for-byte Sutra.
+Everything buildable without live creds is committed. Remaining work needs the Kite app + a live session.
+
+| Layer | Status | Where |
+|---|---|---|
+| Broker (orders / account / positions / SL-M) | ✅ Kite | `kite/kiteBroker.ts` via `broker.ts` seam |
+| Live tick stream → 5m-close trigger | ✅ Kite | `kite/kiteTicker.ts` via `barStream.ts` seam |
+| Data + universe (candles, quotes, NSE screen, NIFTY/India-VIX) | ✅ Kite | `kite/kiteData.ts` + `kite/kiteClient.ts` via `marketData.ts` seam |
+| Session clock + all strategy time-gates | ✅ IST | `scheduler.ts`, `strategyEngine.ts`, `proTradeScannerApi.ts`, `buildPaperTrade.ts` |
+| Daily token refresh (TOTP auto-login) | ✅ | `kite/kiteLogin.ts`, wired in `index.ts` cold-start |
+| Read-only verifier | ✅ | `npm run kite:check` (`kite/smokeTest.ts`) |
+| Engine (14 strategies, 9-group confluence, risk, monitorTrades) | ✅ untouched | reused from Sutra |
+| Sector-trends + news-catalyst feeds | 🟡 stubbed (TODO) | `kite/kiteData.ts` |
+| NSE threshold tuning (ADR/RVOL/impulse) | 🔴 pending live data | dry-run phase |
+
+**Commits:** Step 0 baseline → 1a Kite modules → 1b broker/stream/env seams → Phase 3 data/universe →
+Phase 2 IST clock → TOTP login → smoke test.
+
+**Provider switch:** everything routes on `env.BROKER` (default `kite`); the Alpaca path is retained as a
+legacy fallback. `AUTO_EXECUTE` defaults **off** (shadow-first).
+
+### Remaining steps (creds-gated)
+1. **You:** create the ₹500 Connect app, enable TOTP, fill `daemon/.env.daemon` (`KITE_API_KEY`,
+   `KITE_API_SECRET`, `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`).
+2. **Verify:** `npm run kite:check` — login → instruments → quotes → RELIANCE/HDFCBANK/INFY candles →
+   NIFTY + India VIX (no orders).
+3. **Dry-run:** run the daemon during NSE hours with `DAEMON_AUTO_EXECUTE=false`; confirm the 14
+   strategies fire sane signals; **re-tune NSE thresholds**; wire the two stubbed feeds.
+4. **Go live:** flip `AUTO_EXECUTE=true` with the ₹1L caps + shadow-first; then autonomy (wake/restart).
+
+---
+
 ## The 3 things we take from Stock-analyzer (everything else Sutra already has)
 
 1. **Sector-correlation concentration cap + portfolio-beta cap** — port `_CORR_GROUPS` / `MAX_PER_SECTOR`
@@ -154,7 +188,12 @@ us. **Confirm current self-algo onboarding + OPS threshold with Zerodha before t
 
 ---
 
-## File-by-file change map (Sutra)
+## File-by-file change map (original plan)
+
+> **As-built note:** realized *additively* via provider seams rather than in-place renames —
+> Alpaca modules were kept as a legacy fallback and new `kite/*` modules added behind
+> `broker.ts` / `barStream.ts` / `marketData.ts` (switch on `env.BROKER`). See **Implementation
+> status** above for the actual files. The arrows below show the conceptual mapping.
 
 - **`daemon/src/alpacaBroker.ts` → `kiteBroker.ts`** — `kiteconnect` client; `connect`/daily token
   refresh; `placeOrder` (NSE, product `MIS`/`CNC`/F&O) for entry + **SL-M safety**; `getPositions`,
@@ -243,10 +282,9 @@ qty (**whole shares** — "lots" apply only to F&O).
 
 ## Verification (end-to-end, before scaling capital)
 
-1. **Auth/connection:** `kiteBroker.connect()` → profile + margins; `getInstruments` loads; token
-   refresh works.
-2. **Data parity:** seed + stream RELIANCE / HDFCBANK / INFY; assert 1m/5m/15m candle shape, IST
-   timestamps, and tick→bar aggregation match charts.
+1. **Auth + data parity (one command): `npm run kite:check`** — TOTP auto-login → profile → NSE
+   instrument master → live quotes → RELIANCE/HDFCBANK/INFY 5m candles → NIFTY daily + India VIX.
+   Read-only, places no orders. Assert candle shape + IST timestamps look right vs a chart.
 3. **Dry-run scan:** run the daemon with auto-execute off for one full session; confirm S1–S14 fire
    sane signals on NSE data, the 9-group classifier tags correctly, universe builds, ban/ASM/circuit
    filters exclude. Inspect logs + `data/trades.json`.
