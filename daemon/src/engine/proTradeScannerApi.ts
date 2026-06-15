@@ -11,7 +11,7 @@ import type { MarketDataProviderStatus, StrategySignal, WorkflowStage } from './
 import { workflowStageRank } from './workflowTypes';
 import { getRiskSettings } from '../riskManager';
 import { computeBeta } from '../portfolioRisk';
-import { fetchSharesOutstanding, getFloatFromCache } from '../alpacaBroker';
+import { fetchSharesOutstanding, getFloatFromCache } from '../broker';
 import { fetchEarningsCalendar, getEarningsDays } from '../finnhubClient';
 
 // S9 (flag_break) and S7 (s7_volume_surge) are scout strategies — they need their

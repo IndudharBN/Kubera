@@ -1,6 +1,6 @@
 import { fetchProTradeScannerSnapshot, fetchHotSetSnapshot } from './engine/proTradeScannerApi';
 import type { ProTradeSnapshot, ProTradeRow } from './engine/proTradeScannerApi';
-import { alpacaBarStream } from './alpacaBarStream';
+import { barStream } from './barStream';
 import { getState } from './stateStore';
 import { emit } from './httpServer';
 import { getUniverseBuiltAt, isUniverseFallback } from './alpacaClient';
@@ -31,8 +31,8 @@ export async function runFullScan(): Promise<void> {
 
   // Update bar stream: subscribe to hot-set, drop stale symbols
   const newHotSet = extractHotSet(snapshot.rows);
-  alpacaBarStream.unsubscribeAll(newHotSet);
-  if (newHotSet.length) alpacaBarStream.subscribe(newHotSet);
+  barStream.unsubscribeAll(newHotSet);
+  if (newHotSet.length) barStream.subscribe(newHotSet);
   hotSetSymbols = newHotSet;
 
   const qualified = snapshot.rows.filter((r) => r.qualified).length;
@@ -68,7 +68,7 @@ export async function runHotSetScan(): Promise<void> {
 
   // Re-sync hot-set subscriptions
   const newHotSet = extractHotSet(merged);
-  alpacaBarStream.unsubscribeAll(newHotSet);
-  if (newHotSet.length) alpacaBarStream.subscribe(newHotSet);
+  barStream.unsubscribeAll(newHotSet);
+  if (newHotSet.length) barStream.subscribe(newHotSet);
   hotSetSymbols = newHotSet;
 }

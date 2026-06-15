@@ -1,14 +1,14 @@
 import { runFullScan, runHotSetScan, getCurrentSnapshot } from './scanLoop';
 import { clearUniverseCache } from './engine/proTradeScannerApi';
 import { isUniverseFallback, clearUniverseCache as clearUniverseCacheClient } from './alpacaClient';
-import { alpacaBarStream } from './alpacaBarStream';
+import { barStream } from './barStream';
 import { getState, setState, saveState, applyDayRoll } from './stateStore';
 import { monitorPaperTrades } from './engine/monitorTrades';
 import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
 import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult } from './riskManager';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
-import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions } from './alpacaBroker';
+import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
@@ -254,7 +254,7 @@ export function startScheduler(): void {
   // Connect bar stream — hot-set symbols will be subscribed after first full scan.
   // Note: we do NOT hook onFiveMinClose to runHotSetScan here because it fires
   // once per symbol (120 calls/5m = Alpaca 429). The 20s timer below is sufficient.
-  alpacaBarStream.connect();
+  barStream.connect();
 
   // Initial sync + scan. If the universe lands on fallback, retry after 5 min.
   syncAccount().then(() => runFullScan()).then(() => {

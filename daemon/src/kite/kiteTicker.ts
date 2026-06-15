@@ -34,7 +34,12 @@ class KiteBarStream {
 
   connect(): void {
     if (this.destroyed || this.ticker) return;
-    assertKiteCreds();
+    try {
+      assertKiteCreds();
+    } catch (err) {
+      console.warn('[kite] ticker not started —', (err as Error).message);
+      return;
+    }
     this.ticker = new KiteTicker({ api_key: kiteEnv.API_KEY, access_token: accessToken() });
     this.ticker.autoReconnect(true, 10, 5);
 
