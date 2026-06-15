@@ -49,12 +49,16 @@ Everything buildable without live creds is committed. Remaining work needs the K
 | Broker (orders / account / positions / SL-M) | ✅ Kite | `kite/kiteBroker.ts` via `broker.ts` seam |
 | Live tick stream → 5m-close trigger | ✅ Kite | `kite/kiteTicker.ts` via `barStream.ts` seam |
 | Data + universe (candles, quotes, NSE screen, NIFTY/India-VIX) | ✅ Kite | `kite/kiteData.ts` + `kite/kiteClient.ts` via `marketData.ts` seam |
-| Session clock + all strategy time-gates | ✅ IST | `scheduler.ts`, `strategyEngine.ts`, `proTradeScannerApi.ts`, `buildPaperTrade.ts` |
+| Session clock + all strategy time-gates + day-roll | ✅ IST | `scheduler.ts`, `strategyEngine.ts`, `proTradeScannerApi.ts`, `buildPaperTrade.ts`, `riskManager.ts`, `stateStore.ts` |
+| Risk: −3% daily / −10% HWM-drawdown kills, +2/+3% profit-protect, max 3 + 2/strategy, 70% deploy, ₹ capital cap, order throttle | ✅ wired | `types.ts`, `riskManager.ts`, `scheduler.ts` |
+| Cost-aware net R:R (≥1.5R after STT/brokerage/GST) + NSE holiday calendar | ✅ | `nse.ts`, `buildPaperTrade.ts` |
 | Daily token refresh (TOTP auto-login) | ✅ | `kite/kiteLogin.ts`, wired in `index.ts` cold-start |
 | Read-only verifier | ✅ | `npm run kite:check` (`kite/smokeTest.ts`) |
 | Engine (14 strategies, 9-group confluence, risk, monitorTrades) | ✅ untouched | reused from Sutra |
 | Sector-trends (NSE sub-indices) + catalyst (price-action) | ✅ live | `kite/kiteData.ts` |
 | NSE threshold tuning (ADR/RVOL/impulse) | 🔴 pending live data | dry-run phase |
+| Autonomy: wake-from-sleep / restart scripts + 08:15 early-universe | 🔴 Phase 5 (not started) | `REGISTER_AUTOSTART.ps1` |
+| NIFTY-500 CSV universe seed (vs embedded list) | 🟡 refinement | `kite/kiteData.ts` |
 
 **Commits:** Step 0 baseline → 1a Kite modules → 1b broker/stream/env seams → Phase 3 data/universe →
 Phase 2 IST clock → TOTP login → smoke test.
