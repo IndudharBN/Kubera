@@ -1,0 +1,82 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#05070a] text-[#e2e8f0] selection:bg-indigo-500/30 overflow-hidden;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .dashboard-card {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    @apply rounded-xl shadow-2xl;
+  }
+
+  .glow-indigo {
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+  }
+
+  .status-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .table-header {
+    @apply text-[10px] font-bold uppercase tracking-tight text-slate-500 border-b border-white/5 bg-slate-900/50 sticky top-0 z-10 py-2 px-3;
+  }
+
+  .table-cell {
+    @apply py-2 px-3 border-b border-white/5 align-middle whitespace-nowrap text-[11px] font-medium font-mono;
+  }
+
+  .font-mono-data {
+    font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  }
+
+  .btn-primary {
+    @apply bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-bold text-xs transition-all shadow-lg active:scale-95 disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 px-4 py-2 rounded-lg border border-white/10 font-bold text-xs transition-all active:scale-95;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}

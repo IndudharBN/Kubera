@@ -1,0 +1,6 @@
+{
+  "name": "Nexus Trading Terminal",
+  "description": "High-performance live signal scanner and trade execution dashboard with multi-broker support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
