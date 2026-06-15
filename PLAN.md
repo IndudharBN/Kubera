@@ -66,14 +66,26 @@ Phase 2 IST clock → TOTP login → smoke test.
 **Provider switch:** everything routes on `env.BROKER` (default `kite`); the Alpaca path is retained as a
 legacy fallback. `AUTO_EXECUTE` defaults **off** (shadow-first).
 
-### Remaining steps (creds-gated)
-1. **You:** create the ₹500 Connect app, enable TOTP, fill `daemon/.env.daemon` (`KITE_API_KEY`,
-   `KITE_API_SECRET`, `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`).
+### PENDING (as of now)
+
+**A. Code-only — can be done without creds (mine):**
+- **Phase 5 — autonomy:** rewrite `REGISTER_AUTOSTART.ps1` for **wake-from-sleep @ ~03:45 UK + "At startup" trigger + run-whether-logged-on**; move universe build to **08:15 IST** ("1h early"). *(Not started.)*
+- **Refinement:** swap the embedded NSE seed for the **NIFTY-500 CSV** in `kite/kiteData.ts`. *(Optional.)*
+
+**B. Creds-gated — needs your Kite app (yours, then together):**
+1. **You:** create the ₹500 Connect app at developers.kite.trade, enable TOTP, fill `daemon/.env.daemon`
+   (`KITE_API_KEY`, `KITE_API_SECRET`, `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`).
 2. **Verify:** `npm run kite:check` — login → instruments → quotes → RELIANCE/HDFCBANK/INFY candles →
-   NIFTY + India VIX (no orders).
-3. **Dry-run:** run the daemon during NSE hours with `DAEMON_AUTO_EXECUTE=false`; confirm the 14
-   strategies fire sane signals; **re-tune NSE thresholds** (ADR/RVOL/impulse) on real data.
-4. **Go live:** flip `AUTO_EXECUTE=true` with the ₹1L caps + shadow-first; then autonomy (wake/restart).
+   NIFTY + India VIX (read-only, no orders).
+3. **Dry-run:** run during NSE hours with `DAEMON_AUTO_EXECUTE=false`; confirm the 14 strategies fire
+   sane signals; **re-tune NSE thresholds** (ADR/RVOL/impulse — US large-caps run hotter than NIFTY names).
+4. **Go live:** flip `AUTO_EXECUTE=true` with the ₹1L caps + shadow-first.
+
+**C. Verify-before-live caveats (built blind — confirm against reality):**
+- **TOTP auto-login** (`kite/kiteLogin.ts`) uses Kite's internal login endpoints — may need adjustment on first live run.
+- **NSE 2026 holiday dates** (`nse.ts`) are best-effort — verify vs NSE's official list; override via `data/nse-holidays.json`.
+- **Cost-model %s** (`nse.ts`) — check against your actual Zerodha contract notes during the dry-run.
+- **Data mappings** (symbol↔token, candle timestamps, index-quote keys) — first proven by `kite:check`.
 
 ---
 
