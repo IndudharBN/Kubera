@@ -180,6 +180,18 @@ function findNearestSwingTarget(
   return direction === 'BULL' ? Math.min(...pivots) : Math.max(...pivots);
 }
 
+// Structural T1 — nearest unbroken 5m swing pivot in the [~1R, ~2R] band, else the
+// 1.5R fallback. Mirrors Stock-analyzer's pivot-based first target: price stalls at
+// real levels, not round R-multiples. T2 (below) then takes the next pivot beyond T1.
+function structuralT1(candles: Candle[], dir: 'BULL' | 'BEAR', entry: number, risk: number): number {
+  const fallback = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  if (risk <= 0) return fallback;
+  const floor1R = dir === 'BULL' ? entry + risk * 1.0 : entry - risk * 1.0;
+  const cap2R   = dir === 'BULL' ? entry + risk * 2.0 : entry - risk * 2.0;
+  const pivot = findNearestSwingTarget(candles.slice(-80), dir, floor1R, cap2R, 2);
+  return pivot !== null ? pivot : fallback;
+}
+
 // Structural T2 — fallback chain: 5m pivot → 15m pivot → PDH/PDL → 2.5R
 // Pivot-based levels use the actual intraday structure (unbroken swing highs/lows).
 // PDH/PDL is kept as a last resort when the session is too young for pivots.
@@ -430,7 +442,7 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
   const minBreakout = input.atr20 * 0.25;
   const confirmedBreak = breakoutDistance >= minBreakout;
   const measuredMove = dir === 'BULL' ? breakoutLevel + orRange : breakoutLevel - orRange;
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const preferredTarget = dir === 'BULL' ? entry + risk * PREFERRED_RR : entry - risk * PREFERRED_RR;
   const t2 = dir === 'BULL' ? Math.max(measuredMove, preferredTarget) : Math.min(measuredMove, preferredTarget);
   const tradePlan = selfDir && range && confirmedBreak && retest && orbWidthOk && input.rvol >= rvolMin && timeGateOk ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger) : null;
@@ -513,7 +525,7 @@ export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
     : input.vwap + input.atr20 * STOP_BUFFER_ATR;
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const tradePlan = selfDir && touchedValue && wickOk && reclaimed && rvolOk && rsOk
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
@@ -576,7 +588,7 @@ export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
   // Cap at 1.5% of entry price; anything wider is structurally unsound for a breakout entry.
   const stopWidthPct = entry > 0 ? risk / entry : 1;
   const stopWidthOk = stopWidthPct <= 0.015;
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const tradePlan = recent.length >= 6 && rsEdge && breakout && stopSide && stopWidthOk && input.rvol >= 1.0 ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger) : null;
   const fifteen = input.candles.fifteen;
@@ -669,7 +681,7 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
   const orOpposite = range ? (dir === 'BULL' ? range.high : range.low) : null;
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2Raw = orOpposite ?? (dir === 'BULL' ? entry + risk * PREFERRED_RR : entry - risk * PREFERRED_RR);
   const preferredTarget = dir === 'BULL' ? entry + risk * PREFERRED_RR : entry - risk * PREFERRED_RR;
   const t2 = dir === 'BULL' ? Math.max(t2Raw, preferredTarget) : Math.min(t2Raw, preferredTarget);
@@ -784,7 +796,7 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
     : entry;
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const fvgPathOnly = !atOb && atFvg;  // pure FVG path — OB+FVG confluence stays on OB rules
   const fvg15mOk   = fvgPathOnly ? input.trend15mAligned : true;  // 15m trend: hard gate for FVG solo
@@ -880,7 +892,7 @@ export function evaluateMssBreakout(input: StrategyInput): StrategySignal {
     : Math.max(...five.slice(-5).map((c) => c.high)) + input.atr20 * STOP_BUFFER_ATR;
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, swingStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const tradePlan = mssOk && bar2Ok && !zoneBlocked && volOk ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger) : null;
   const checklist = [
@@ -1008,7 +1020,7 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     : Math.max(...five.slice(-4).map((c) => c.high)) + input.atr20 * STOP_BUFFER_ATR;
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, swingStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const tradePlan = emaRising && touchedEma && reclaimed && input.rvol >= 0.8
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
@@ -1078,7 +1090,7 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
     : flagHigh + input.atr20 * STOP_BUFFER_ATR;
   const stop = enforceMinStop(dir, entry, noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel), input.atr20);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const tradePlan = flagFormed && breakout && rvolOk && volExpansion
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
@@ -1164,7 +1176,7 @@ export function evaluateOrb15mRetest(input: StrategyInput): StrategySignal {
     : entry;
   const stop = noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const computedRR = ob && atOb ? rr(entry, stop, t2, dir) : 0;
   const rrOk = computedRR >= MIN_RR_15M;
@@ -1252,7 +1264,7 @@ export function evaluateVwap15mPullback(input: StrategyInput): StrategySignal {
   const rawStop = dir === 'BULL' ? swing - input.atr20 * STOP_BUFFER_15M : swing + input.atr20 * STOP_BUFFER_15M;
   const stop = noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const rrOk = rr(entry, stop, t2, dir) >= MIN_RR_15M;
   const tradePlan = selfDir && touchedVwap && reclaimed && rsOk && rvolOk && adrOk && rrOk
@@ -1321,7 +1333,7 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
     : ema20Now + input.atr20 * STOP_BUFFER_15M;
   const stop = noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const rrOk = rr(entry, stop, t2, dir) >= MIN_RR_15M;
   const tradePlan = emaRising && touchedEma && reclaimed && rvolOk && adrOk && rrOk && timeGateOk
@@ -1525,7 +1537,7 @@ export function evaluateSniper1m(input: StrategyInput): StrategySignal {
     : entry;
   const stop = noiseFlooredStop(dir, entry, rawStop, input.atr20, input.vixLevel);
   const risk = Math.abs(entry - stop);
-  const t1 = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
+  const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
   const computedRR = ob1m && atOb1m ? rr(entry, stop, t2, dir) : 0;
   const rrOk = computedRR >= MIN_RR_SNIPER;

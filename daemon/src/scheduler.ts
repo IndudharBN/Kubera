@@ -157,6 +157,7 @@ function tryFireTrades(): void {
   for (const row of snapshot.rows) {
     if (!row.qualified || !row.tradePlan) continue;
     if (state.firedToday.includes(row.symbol)) continue;
+    if (row.adrExhausted) { console.log(`[executor] ${row.symbol} ADR exhausted — no new entry`); continue; }
     if (Date.now() - lastOrderAt < 2500) break; // order-rate throttle (≤1 entry / ~2.5s)
 
     const sig = row.primaryStrategy;

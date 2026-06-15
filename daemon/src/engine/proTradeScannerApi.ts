@@ -53,6 +53,7 @@ export interface ProTradeRow {
   reason: string;
   atr20: number;
   atrPct: number;
+  adrExhausted: boolean;
   dollarVolM: number;
   mktCapB: number | null;
   sharesOutstanding: number;
@@ -337,6 +338,13 @@ function buildRowFromAlpaca(
   const atrPct = price > 0 ? (atr20 / price) * 100 : 0;
   const dollarVolM = (price * meta.todayVolume) / 1_000_000;
 
+  // Hard ADR-exhaustion: once today's range ≥ full ATR20, the move is largely done —
+  // block new entries (vs Sutra's size-halving). Stock-analyzer ADR_EXHAUST_PCT behavior.
+  const todayD = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const todayFive = five.filter((c) => new Date(c.time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayD);
+  const dayRange = todayFive.length ? Math.max(...todayFive.map((c) => c.high)) - Math.min(...todayFive.map((c) => c.low)) : 0;
+  const adrExhausted = atr20 > 0 && dayRange >= atr20;
+
   const vwap = five.length ? sessionVwap(five) : price;
   const trend5m = candleTrend(five);
   const trend15m = candleTrend(fifteen);
@@ -432,6 +440,7 @@ function buildRowFromAlpaca(
     reason: `${baseReason} | ${scored.reason}`,
     atr20: round(atr20, 3),
     atrPct: round(atrPct, 2),
+    adrExhausted,
     dollarVolM: round(dollarVolM, 1),
     mktCapB: null,
     sharesOutstanding: getFloatFromCache(symbol),
