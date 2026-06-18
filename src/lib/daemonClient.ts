@@ -1,7 +1,7 @@
-// REST client for the Sutra daemon (port 3001).
+// REST client for the Kubera daemon (port 5003).
 // All methods throw on network error — callers should catch.
 
-const BASE = 'http://localhost:3001';
+const BASE = 'http://localhost:5003';
 
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(5000) });

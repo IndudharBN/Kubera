@@ -1,10 +1,10 @@
 # ============================================================================
-#  Sutra — Register auto-start with Windows Task Scheduler
+#  Kubera — Register auto-start with Windows Task Scheduler
 #  Run ONCE (no admin needed).
 #      Right-click > Run with PowerShell   — or:
 #      powershell -ExecutionPolicy Bypass -File .\REGISTER_AUTOSTART.ps1
 #
-#  Creates task "Sutra-EnsureRunning" that runs ENSURE_RUNNING.bat on:
+#  Creates task "Kubera-EnsureRunning" that runs ENSURE_RUNNING.bat on:
 #    - workstation UNLOCK  (returning after sleep/lock — the key trigger)
 #    - LOGON               (covers reboots / Windows Update restarts)
 #
@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 $root     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script   = Join-Path $root 'ENSURE_RUNNING.bat'
-$taskName = 'Sutra-EnsureRunning'
+$taskName = 'Kubera-EnsureRunning'
 
 if (-not (Test-Path $script)) { throw "ENSURE_RUNNING.bat not found at $script" }
 
@@ -24,7 +24,7 @@ $svc.Connect()
 $rootFolder = $svc.GetFolder('\')
 
 $def = $svc.NewTask(0)
-$def.RegistrationInfo.Description = 'Ensure Sutra daemon (3001) and UI (3006) are running. Idempotent — safe to fire on every unlock.'
+$def.RegistrationInfo.Description = 'Ensure Kubera daemon (5003) and UI (5004) are running. Idempotent — safe to fire on every unlock.'
 $def.Settings.Enabled                    = $true
 $def.Settings.StartWhenAvailable         = $true   # catch up if trigger was missed
 $def.Settings.DisallowStartIfOnBatteries = $false

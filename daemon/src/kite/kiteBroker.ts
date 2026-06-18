@@ -13,6 +13,7 @@ export interface KiteBracketResult {
   ok: boolean;
   entryOrderId?: string;
   stopOrderId?: string;
+  tpOrderId?: string;
   qty?: number;
   error?: string;
 }
@@ -39,18 +40,20 @@ function roundToTick(price: number, tick: number): number {
 interface RawOrderResp { order_id: string }
 
 /**
- * Entry (MARKET, MIS) + safety SL-M at the structural stop. Whole shares only.
- * Target/trailing handled downstream by monitorTrades. `notional` in ₹.
+ * Entry (MARKET, MIS) + resting safety SL-M at the structural stop + resting TP-LIMIT at the target
+ * (T2). Zerodha has no native OCO for regular orders, so the daemon cancels the sibling on any fill
+ * and manages the BE→T1 ratchet via market-close; the resting SL-M + TP-LIMIT are the daemon-down
+ * backstops (hard stop + profit capture). Whole shares only. `notional` in ₹.
  */
 export async function placeBracketOrder(params: {
   symbol: string;
   direction: 'BULL' | 'BEAR';
   entry: number;
   stop: number;
-  target: number;   // accepted for parity / logging; not sent (no native bracket)
+  target: number;   // resting TP-LIMIT placed here (T2)
   notional: number;
 }): Promise<KiteBracketResult> {
-  const { symbol, direction, entry, stop, notional } = params;
+  const { symbol, direction, entry, stop, target, notional } = params;
   const qty = Math.max(1, Math.floor(notional / entry));
   const info = instrumentInfo(symbol);
   const tick = info?.tickSize ?? 0.05;
@@ -89,7 +92,28 @@ export async function placeBracketOrder(params: {
       };
     }
 
-    return { ok: true, entryOrderId: entryResp.order_id, stopOrderId, qty };
+    // Resting TP-LIMIT at the target (T2). Non-fatal if it fails — monitorTrades still takes profit
+    // by market-close as a fallback. Same side as the stop (exit side).
+    let tpOrderId: string | undefined;
+    if (target > 0) {
+      try {
+        const tpResp = (await kc().placeOrder('regular', {
+          exchange: 'NSE',
+          tradingsymbol: symbol.toUpperCase(),
+          transaction_type: stopSide,
+          quantity: qty,
+          product: kiteEnv.PRODUCT,
+          order_type: 'LIMIT',
+          price: roundToTick(target, tick),
+          validity: 'DAY',
+        })) as unknown as RawOrderResp;
+        tpOrderId = tpResp.order_id;
+      } catch (tpErr) {
+        console.warn(`[kiteBroker] ${symbol} TP-LIMIT failed (daemon will take profit by market-close):`, (tpErr as Error).message);
+      }
+    }
+
+    return { ok: true, entryOrderId: entryResp.order_id, stopOrderId, tpOrderId, qty };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }

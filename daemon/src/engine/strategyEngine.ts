@@ -5,6 +5,7 @@ import { closes, last, round } from './ohlcv';
 import { findOrderBlockZone, rejectionCandle } from './smc';
 import type { SignalGroup, StrategyChecklistItem, StrategyId, StrategyInput, StrategySignal, TradePlan, WorkflowStage } from './workflowTypes';
 import { STRATEGY_LABELS, workflowStageRank } from './workflowTypes';
+import { istDateOf } from './tzfast';
 
 const MIN_RR = 1.5;
 const PREFERRED_RR = 2.5;
@@ -744,8 +745,10 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
   const trigger = last(five);
 
   // S5 self-determines direction from which OB/FVG zone price is currently retesting
-  const bullOb = findOrderBlockZone(five, 'BULL', 1.1, 20);
-  const bearOb = findOrderBlockZone(five, 'BEAR', 1.1, 20);
+  // Impulse 1.4×ATR (was 1.1): on high-beta movers, weak OBs get sliced through — only strong,
+  // institutional-grade order blocks hold. Tuning to lift S5's win rate on volatile names.
+  const bullOb = findOrderBlockZone(five, 'BULL', 1.4, 20);
+  const bearOb = findOrderBlockZone(five, 'BEAR', 1.4, 20);
   const fvgResult = detectFvg(five, 20);
   const gap = fvgResult.latestGap;
 
@@ -806,17 +809,19 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
   const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const etMins = etNow.getHours() * 60 + etNow.getMinutes();
   const lateSession = etMins >= 14 * 60 + 30; // ≥14:30 IST — 1h before 15:30 close
+  const rsiVal = rsi14(closes(input.candles.five));
+  const rsiOk = dir === 'BULL' ? rsiVal < 65 : rsiVal > 35;
   // OB entries require a rejection candle — price slicing through an OB without a wick/reversal
   // bar means the zone is breaking, not holding. FVG entries don't need it (the gap is the magnet).
   const entryConfirmed = atOb ? obReject : atFvg;
-  const tradePlan = entryConfirmed && rvolOk && fvgSizeOk && !lateSession && fvg15mOk ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger) : null;
+  // rsiOk is now a HARD gate (was informational): on movers, don't fade into an extended move —
+  // a BULL bounce with RSI≥65 (or BEAR with RSI≤35) usually gets run over. Tuning for volatile names.
+  const tradePlan = entryConfirmed && rvolOk && fvgSizeOk && !lateSession && fvg15mOk && rsiOk ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger) : null;
   const structureLabel = atOb && atFvg
     ? `OB+FVG confluence`
     : atOb ? `OB entry`
     : atFvg && gap ? `FVG entry` : '';
   const rthBars = rthBarCount(input.candles.five);
-  const rsiVal = rsi14(closes(input.candles.five));
-  const rsiOk = dir === 'BULL' ? rsiVal < 65 : rsiVal > 35;
   const checklist = [
     selfDir ? pass('Directional bias', `${selfDir} — self-determined from ${atOb ? 'OB' : 'FVG'} at price`) : fail('Directional bias', 'No OB or FVG at current price — direction unknown'),
     fvgPathOnly
@@ -917,10 +922,10 @@ function checkS7VolumeSurge(input: StrategyInput): StrategySignal | null {
   // Mid-session volume baseline: exclude the first 6 RTH bars (9:30–10:00 AM open period).
   // Opening bars carry 3–5× normal volume and inflate the average, making 2× impossible to hit mid-session.
   // Fallback to rolling 20 bars when not enough mid-session history exists.
-  const todayET = new Date(bar.time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const todayET = istDateOf(bar.time);
   const todayRTH = candles.five.filter((c) => {
     const d = new Date(c.time);
-    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayET
+    return istDateOf(c.time) === todayET
       && d.getUTCHours() * 60 + d.getUTCMinutes() >= 3 * 60 + 45;
   });
   const midSessionBars = todayRTH.length > 7 ? todayRTH.slice(6, -1) : [];
@@ -994,8 +999,11 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     return signal('ema20_bounce', input, [fail('Data', 'EMA20 unavailable')], null, 'EMA20 computation failed.');
   }
 
-  // S8 self-determines direction: EMA20 slope defines the bounce direction
-  const selfDir: 'BULL' | 'BEAR' | null = ema20Now > ema20Prev3 ? 'BULL' : ema20Now < ema20Prev3 ? 'BEAR' : null;
+  // S8 self-determines direction: EMA20 slope. India-tuned — require a REAL slope (≥0.15% over 3 bars),
+  // not just any tick of difference; a near-flat EMA20 bounce on a 5m chart is chop, not trend.
+  const selfDir: 'BULL' | 'BEAR' | null =
+    ema20Now > ema20Prev3 * 1.0015 ? 'BULL' :
+    ema20Now < ema20Prev3 * 0.9985 ? 'BEAR' : null;
   const dir: 'BULL' | 'BEAR' = selfDir ?? 'BULL'; // geometry fallback; tradePlan is null when selfDir=null
   const selfInput = selfDir
     ? {
@@ -1013,6 +1021,25 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     ? recent3.some((c) => c.low <= ema20Now + tolerance)
     : recent3.some((c) => c.high >= ema20Now - tolerance);
   const reclaimed = dir === 'BULL' ? trigger.close > ema20Now : trigger.close < ema20Now;
+  // India-tuned conviction filters: (1) RVOL ≥1.2 — 5m bounces in weak volume are chop (noisier than
+  // the 15m variant which uses 0.8); (2) the reclaim bar must close in the strong half of its range
+  // (body ≥50%), i.e. an actual defended bounce, not a wick-through-and-fade.
+  const rvolOk = input.rvol >= 1.2;
+  const tRange = trigger.high - trigger.low;
+  const bounceStrong = tRange > 1e-8 && (dir === 'BULL'
+    ? (trigger.close - trigger.low) / tRange >= 0.5
+    : (trigger.high - trigger.close) / tRange >= 0.5);
+  // Swing 2 (S8-only, isolated): (a) bounce must be WITH the session trend — price AND EMA20 both on
+  // the trend side of VWAP (VWAP is a reliable intraday anchor, unlike the often-FLAT trend15m);
+  // (b) a genuine trend leg must precede the pullback — price reached ≥1.2×ATR beyond EMA20 in the
+  // last 10 bars — so we take the FIRST pullback of a real move, not repeated chop touches at EMA20.
+  const vwapStacked = dir === 'BULL'
+    ? input.price > input.vwap && ema20Now > input.vwap
+    : input.price < input.vwap && ema20Now < input.vwap;
+  const recent10 = five.slice(-11, -1);
+  const hadTrendLeg = recent10.some((c) => dir === 'BULL'
+    ? (c.high - ema20Now) >= input.atr20 * 1.2
+    : (ema20Now - c.low) >= input.atr20 * 1.2);
 
   const entry = input.price;
   const swingStop = dir === 'BULL'
@@ -1022,7 +1049,7 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
   const risk = Math.abs(entry - stop);
   const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
-  const tradePlan = emaRising && touchedEma && reclaimed && input.rvol >= 0.8
+  const tradePlan = emaRising && touchedEma && reclaimed && rvolOk && bounceStrong && vwapStacked && hadTrendLeg
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
     : null;
 
@@ -1037,15 +1064,16 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     reclaimed
       ? pass('Recovery candle', `Close ${dir === 'BULL' ? 'above' : 'below'} EMA20 ✓`)
       : fail('Recovery candle', 'Waiting for bar to close back through EMA20'),
-    htfTrendContext(selfInput),
-    pass('VWAP context', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above VWAP ✓' : 'Below VWAP ✓') : 'VWAP misaligned — watch'} — informational`),
-    input.rvol >= 0.8 ? pass('RVOL ≥0.8×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥0.8×', `${round(input.rvol, 2)}× — EMA bounce in low volume is chop, not trend`),
+    vwapStacked ? pass('VWAP-stacked', `Price & EMA20 both ${dir === 'BULL' ? 'above' : 'below'} VWAP — with session trend ✓`) : fail('VWAP-stacked', 'Price/EMA20 not stacked on VWAP — counter-trend bounce, skip'),
+    hadTrendLeg ? pass('Prior trend leg', `Price reached ≥1.2×ATR from EMA20 in last 10 bars — real move ✓`) : fail('Prior trend leg', 'No prior impulse leg — chop touch, not a trend pullback'),
+    bounceStrong ? pass('Bounce conviction', `Reclaim bar body ≥50% — defended bounce ✓`) : fail('Bounce conviction', 'Weak reclaim bar (wick-through) — no conviction'),
+    rvolOk ? pass('RVOL ≥1.2×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥1.2×', `${round(input.rvol, 2)}× — 5m EMA bounce in weak volume is chop (India-tuned)`),
     ema1mCheck(input),
     spySessionCheck(selfInput),
   ];
 
   return signal('ema20_bounce', selfInput, checklist, tradePlan,
-    'S8 EMA20 bounce: EMA slope self-determines direction. Rising/falling EMA20 touched + recovery close + RVOL≥0.8. Hard gates: selfDir (slope), emaRising, touchedEma, reclaimed, rvol.');
+    'S8 EMA20 bounce (India-tuned v2): real EMA slope + touch + reclaim body≥50% + RVOL≥1.2 + VWAP-stacked + prior ≥1.2×ATR trend leg. Hard gates: selfDir, touchedEma, reclaimed, bounceStrong, rvol, vwapStacked, hadTrendLeg.');
 }
 
 // ─── S9: Flag Break ───────────────────────────────────────────────────────────
@@ -1167,7 +1195,7 @@ export function evaluateOrb15mRetest(input: StrategyInput): StrategySignal {
   const ob = dir === 'BULL' ? bullOb : bearOb;
   const atOb = dir === 'BULL' ? atBullOb : atBearOb;
   const obReject = ob && atOb ? rejectionCandle(fifteen, dir, ob) : false;
-  const rvolOk = input.rvol >= 1.0;
+  const rvolOk = input.rvol >= 0.8; // 15m setups need less instantaneous volume than 5m (India-tuned)
   const adrOk = input.atrPct >= ADR_MIN_15M;
 
   const entry = input.price;
@@ -1257,7 +1285,7 @@ export function evaluateVwap15mPullback(input: StrategyInput): StrategySignal {
   );
   const reclaimed = dir === 'BULL' ? trigger.close > input.vwap : trigger.close < input.vwap;
   const rsOk = dir === 'BULL' ? input.rsVsBenchmark >= 1.005 : input.rsVsBenchmark <= 0.995;
-  const rvolOk = input.rvol >= 1.0;
+  const rvolOk = input.rvol >= 0.8; // 15m setups need less instantaneous volume than 5m (India-tuned)
   const adrOk = input.atrPct >= ADR_MIN_15M;
   const entry = input.price;
   const swing = dir === 'BULL' ? Math.min(...recent4.map(c => c.low)) : Math.max(...recent4.map(c => c.high));
@@ -1320,7 +1348,7 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
     : c.high >= ema20Now - emaTolerance
   );
   const reclaimed = dir === 'BULL' ? trigger.close > ema20Now : trigger.close < ema20Now;
-  const rvolOk = input.rvol >= 1.0;
+  const rvolOk = input.rvol >= 0.8; // 15m setups need less instantaneous volume than 5m (India-tuned)
   const adrOk = input.atrPct >= ADR_MIN_15M;
   // Time gate: no S12 entries before 10:45 AM ET (1h15m into the session). A 15m
   // EMA20 trend isn't meaningful until the session has developed. Explicit clock
@@ -1478,8 +1506,10 @@ export function evaluateSniper1m(input: StrategyInput): StrategySignal {
   }
 
   // ── Confirm higher-TF OB zone first (E1 = 15m, E2 = 5m) ─────────────────
-  const bull15m = findOrderBlockZone(fifteen, 'BULL', 1.6, 30);
-  const bear15m = findOrderBlockZone(fifteen, 'BEAR', 1.6, 30);
+  // 15m OB impulse 1.3×ATR (was 1.6×): NSE 15m impulses are smaller than US momentum names, so 1.6×
+  // almost never found HTF context → sniper never engaged. 1.3× keeps it institutional but India-real.
+  const bull15m = findOrderBlockZone(fifteen, 'BULL', 1.3, 30);
+  const bear15m = findOrderBlockZone(fifteen, 'BEAR', 1.3, 30);
   const bull5m  = findOrderBlockZone(five,    'BULL', 1.1, 20);
   const bear5m  = findOrderBlockZone(five,    'BEAR', 1.1, 20);
 

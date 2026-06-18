@@ -18,6 +18,31 @@ export function nseRoundTripCost(price: number, qty: number): number {
   return brokerage + stt + exch + sebi + stamp + gst;
 }
 
+// ── NSE intraday volume curve (for accurate RVOL) ─────────────────────────────
+// NSE intraday volume is NOT uniform: it is heavily front-loaded (first hour ~24% of
+// the day), thins through the 11:30–13:30 lunch lull, and ramps into the 15:30 close.
+// A linear (minsIn/375) expectation inflates RVOL midday and distorts it at the open —
+// which corrupts volume-surge logic and the score. These anchors are the empirical
+// cumulative fraction of full-session volume by minutes into the 09:15–15:30 session
+// (375 min). Piecewise-linear between anchors. RVOL = todayVol / (avgDayVol × fraction).
+const VOL_CURVE: Array<[number, number]> = [
+  [0, 0.00], [15, 0.08], [30, 0.14], [60, 0.24], [90, 0.32], [120, 0.39],
+  [150, 0.45], [180, 0.51], [210, 0.56], [240, 0.61], [270, 0.67],
+  [300, 0.74], [330, 0.82], [360, 0.93], [375, 1.00],
+];
+
+/** Expected cumulative fraction [0.05–1] of the day's volume by `minsIntoSession`. */
+export function nseSessionVolumeFraction(minsIntoSession: number): number {
+  const m = Math.max(0, Math.min(375, minsIntoSession));
+  let frac = 1;
+  for (let i = 1; i < VOL_CURVE.length; i++) {
+    const [m0, f0] = VOL_CURVE[i - 1];
+    const [m1, f1] = VOL_CURVE[i];
+    if (m <= m1) { frac = f0 + ((f1 - f0) * (m - m0)) / (m1 - m0); break; }
+  }
+  return Math.max(0.05, frac);
+}
+
 // ── NSE trading-holiday calendar ──────────────────────────────────────────────
 // Best-effort 2026 list; override/extend via data/nse-holidays.json (array of
 // "YYYY-MM-DD" IST dates). VERIFY against NSE's official annual list each year.

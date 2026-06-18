@@ -15,6 +15,7 @@ import type { Candle, CandleSet, Interval } from '../engine/ohlcv';
 import type { SymbolMeta } from '../alpacaClient';
 import type { CatalystTier } from '../alpacaClient';
 import { getCandles, getCandlesByToken, getQuotes, getLtp, INDEX_TOKENS } from './kiteClient';
+import { nseSessionVolumeFraction } from '../nse';
 
 export const UNIVERSE_TARGET = 100;
 const BENCH = 'SPY'; // sentinel used by the engine → NIFTY 50 here
@@ -128,11 +129,11 @@ export function buildCandleSet(
 
 // ── universe meta (one batched quote call + cached daily bars for rvol/HL) ─────
 function sessionProgressFactor(): number {
-  // NSE 09:15–15:30 IST = 03:45–10:00 UTC
+  // Front-loaded NSE intraday volume curve (not linear) — see nseSessionVolumeFraction.
+  // NSE 09:15–15:30 IST = 03:45–10:00 UTC.
   const utcMins = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
-  const open = 3 * 60 + 45;
-  const close = 10 * 60;
-  return Math.min(1, Math.max(0.05, (utcMins - open) / (close - open)));
+  const minsIntoSession = utcMins - (3 * 60 + 45);
+  return nseSessionVolumeFraction(minsIntoSession);
 }
 
 export async function fetchUniverseMeta(symbols: string[]): Promise<SymbolMeta[]> {

@@ -72,21 +72,23 @@ export function monitorPaperTrades(
       changed = true;
       return closePaperTrade(trade, target2, 'Target');
     }
+    // Ratchet ladder (stop moves UP only, never down):
+    //  • T1 (1.5R) reached → stop to BREAKEVEN (free trade; full size still runs to T2).
+    //  • price extends to ~2R (½-way past T1 toward T2) → lock stop at T1 (+1.5R). The lock only
+    //    triggers AFTER the runner proves itself, so a healthy pullback in the T1→T2 push doesn't
+    //    stop us out and kill the T2 runner (capping at T1 too early was shown to bleed edge).
     if (!trade.t1HitAt && hitT1) {
       changed = true;
       return { ...trade, t1HitAt: new Date().toISOString(), trailingStop: trade.entry };
     }
     if (trade.t1HitAt) {
-      const t1Level = target1;
-      const slAtEntry = Math.abs(trailingStop - trade.entry) < 0.01;
-      if (slAtEntry) {
-        const pulledBackToT1 = trade.direction === 'BULL'
-          ? current >= t1Level * 0.997 && current > trade.entry
-          : current <= t1Level * 1.003 && current < trade.entry;
-        if (pulledBackToT1) {
-          changed = true;
-          return { ...trade, trailingStop: t1Level };
-        }
+      const risk = Math.abs(trade.entry - trade.stop);
+      const twoR = trade.direction === 'BEAR' ? trade.entry - risk * 2 : trade.entry + risk * 2;
+      const reached2R = trade.direction === 'BEAR' ? current <= twoR : current >= twoR;
+      const stopBelowT1 = trade.direction === 'BEAR' ? trailingStop > target1 : trailingStop < target1;
+      if (reached2R && stopBelowT1) {
+        changed = true;
+        return { ...trade, trailingStop: target1 };
       }
     }
     if (hitStop) {

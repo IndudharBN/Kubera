@@ -120,9 +120,14 @@ async function monitorLoop(): Promise<void> {
         // OCO (sequenced to remove the cancel/close race): await the SL-M cancel FIRST,
         // then square off. closePaperPosition is position-aware (reads live qty), so even
         // if the SL-M already filled, the close is a no-op — no double-fill, no orphan.
+        // OCO: cancel BOTH resting legs (SL-M + TP-LIMIT) before squaring off, so neither orphans.
         if (after.stopOrderId) {
           await cancelPaperOrder(after.stopOrderId).catch((err: Error) =>
             console.warn(`[broker] stop cancel failed ${after.symbol}:`, err.message));
+        }
+        if (after.tpOrderId) {
+          await cancelPaperOrder(after.tpOrderId).catch((err: Error) =>
+            console.warn(`[broker] TP cancel failed ${after.symbol}:`, err.message));
         }
         await closePaperPosition(after.symbol).catch((err: Error) =>
           console.warn(`[broker] position close failed ${after.symbol}:`, err.message),
@@ -250,8 +255,8 @@ function tryFireTrades(): void {
       }).then((order) => {
         const ts = loadTrades();
         const idx = ts.findIndex((t: { id: string }) => t.id === newTrade.id);
-        if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId }; saveTrades(ts); }
-        console.log(`[broker] order placed ${newTrade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'}`);
+        if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId, tpOrderId: order.tpId }; saveTrades(ts); }
+        console.log(`[broker] order placed ${newTrade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'} tp=${order.tpId ?? 'n/a'}`);
       }).catch((err: Error) => {
         console.warn(`[broker] order failed ${newTrade.symbol}:`, err.message);
       });
@@ -298,9 +303,12 @@ async function eodClose(): Promise<void> {
 
   if (changed) {
     saveTrades(updated as PaperTrade[]);
-    // OCO: cancel every resting SL-M BEFORE the market square-off so none can orphan.
-    const stopIds = trades.filter((t) => t.status === 'Open' && t.stopOrderId).map((t) => t.stopOrderId!);
-    await Promise.allSettled(stopIds.map((id) => cancelPaperOrder(id)));
+    // OCO: cancel every resting SL-M AND TP-LIMIT BEFORE the market square-off so none can orphan.
+    const restingIds = trades
+      .filter((t) => t.status === 'Open')
+      .flatMap((t) => [t.stopOrderId, t.tpOrderId])
+      .filter((id): id is string => Boolean(id));
+    await Promise.allSettled(restingIds.map((id) => cancelPaperOrder(id)));
     console.log('[eod] all open trades closed at market');
     await closeAllPaperPositions().catch((err: Error) =>
       console.warn('[eod] closeAll failed:', err.message),

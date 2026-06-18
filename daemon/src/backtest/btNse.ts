@@ -14,12 +14,12 @@
 
 import type { Candle, CandleSet } from '../engine/ohlcv';
 import { closes, last } from '../engine/ohlcv';
-import { ema } from '../engine/indicators';
+import { ema, sessionVwap } from '../engine/indicators';
 import { buildRowFromAlpaca, candleTrend } from '../engine/proTradeScannerApi';
 import { monitorPaperTrades } from '../engine/monitorTrades';
 import { buildPaperTrade } from '../engine/buildPaperTrade';
 import { classifyMarketRegime } from '../engine/marketRegimeLogic';
-import { nseRoundTripCost } from '../nse';
+import { nseRoundTripCost, nseSessionVolumeFraction } from '../nse';
 import type { PaperTrade } from '../types';
 import { ensureKiteLogin } from '../kite/kiteLogin';
 import { loadInstruments, getCandles, getCandlesByToken, INDEX_TOKENS } from '../kite/kiteClient';
@@ -27,6 +27,9 @@ import { loadInstruments, getCandles, getCandlesByToken, INDEX_TOKENS } from '..
 // Data source: 'kite' (volume-complete — default) or 'yahoo' (free, no auth, but
 // intraday volume is unreliable → RVOL gates reject everything). Set BT_SOURCE=yahoo to force Yahoo.
 const SOURCE = (process.env['BT_SOURCE'] ?? 'kite').toLowerCase();
+const ONLY = process.env['BT_ONLY'] ?? ''; // if set, grade ONLY this strategyId (isolation testing)
+// position sizing now lives in DEFAULT_RISK_SETTINGS.sizeMultiplier (applied in buildPaperTrade),
+// so the backtest mirrors live exactly. To sweep, change that setting.
 const KITE_DAYS: Record<string, number> = { '1m': 40, '5m': 60, '15m': 60, '1h': 60, '1d': 400 };
 const YH_RANGE: Record<string, string> = { '1m': '5d', '5m': '1mo', '15m': '1mo', '1h': '1mo', '1d': '1y' };
 
@@ -86,6 +89,12 @@ function upTo<T extends { time: string }>(arr: T[], iso: string): T[] {
 }
 
 // Regime router (mirror of scheduler.regimeAllows — orchestration, not strategy logic)
+// HYBRID book. FULL_FREQ = proven edges, take their own slot on every qualifying bar (untouched).
+// SELECTIVE = continuation strategies that bleed at full frequency but were profitable in round-1's
+// "best-signal-only" mode — so only the single highest-confidence one trades per bar. All other
+// strategies are excluded (graded net-negative).
+const FULL_FREQ = new Set(['liquidity_sweep', 'vwap15m_pullback']);
+const SELECTIVE = new Set(['ema20_bounce', 'mss_breakout', 'orb_retest', 'orb15m_retest', 'sniper_1m']);
 const MEAN_REV = new Set(['range_reversion']);
 const BREAKOUTS = new Set(['orb_retest', 'mss_breakout', 'flag_break', 's7_volume_surge']);
 function regimeAllows(id: string | null, regime: 'BULL' | 'SIDEWAYS' | 'BEAR'): boolean {
@@ -99,17 +108,29 @@ async function loadSeries(symbol: string, interval: '1m' | '5m' | '15m' | '1h' |
   if (SOURCE === 'kite') {
     const to = new RealDate();
     const from = new RealDate(RealDate.now() - KITE_DAYS[interval] * 86_400_000);
-    if (isIndex && indexToken) return getCandlesByToken(indexToken, interval, from, to);
-    return getCandles(symbol, interval, from, to);
+    // Kite historical occasionally times out (ECONNABORTED) — retry with backoff so a transient
+    // network blip doesn't silently drop a whole symbol from the run.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return isIndex && indexToken
+          ? await getCandlesByToken(indexToken, interval, from, to)
+          : await getCandles(symbol, interval, from, to);
+      } catch (e) {
+        if (attempt === 3) throw e;
+        await sleep(1000 * (attempt + 1));
+      }
+    }
   }
   return fetchYahoo(isIndex ? symbol : `${symbol}.NS`, interval, YH_RANGE[interval]);
 }
 
 interface Closed { strategyId: string; group: string; netPnl: number; r: number; }
 
+// HIGH-BETA / HIGH-ATR basket — the trending movers the live universe filter (ATR%/beta/turnover)
+// would actually surface, NOT mega-caps. Tests whether momentum strategies (mss/ema20/ORB) come alive
+// on stocks that trend intraday. Adani/PSU-banks/Vedanta/railways = high-beta, retail-momentum-driven.
 const SYMBOLS = [
-  'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'SBIN', 'AXISBANK', 'BHARTIARTL',
-  'ITC', 'TATAMOTORS', 'TATASTEEL', 'HINDALCO', 'WIPRO', 'TCS', 'LT', 'MARUTI', 'KOTAKBANK',
+  'ADANIENT', 'ADANIPORTS', 'VEDL', 'PNB', 'CANBK', 'BANKBARODA', 'JSWSTEEL', 'IRCTC',
 ];
 const ACCOUNT = 100_000;
 
@@ -147,62 +168,88 @@ async function main(): Promise<void> {
     } catch (e) { console.warn(`skip ${sym}: ${(e as Error).message}`); continue; }
     if (five.length < 100 || daily.length < 210) { console.warn(`skip ${sym}: thin data (${five.length}×5m, ${daily.length}d)`); continue; }
 
-    let open: PaperTrade | null = null;
-    const entriesPerDay = new Map<string, number>();
+    // Precompute IST date strings ONCE per array — istDateOf is a slow toLocaleDateString call, and
+    // recomputing it per-bar over growing slices was an O(n²) blow-up (millions of tz calls/symbol).
+    const fiveIst = five.map((b) => istDateOf(b.time));
+    const dailyIst = daily.map((b) => istDateOf(b.time));
+    const niftyDailyIst = niftyDaily.map((b) => istDateOf(b.time));
+    const vixIst = vixDaily.map((b) => istDateOf(b.time));
+    const _t0 = Date.now();
+    console.log(`${sym}: data loaded (${five.length}×5m, ${one.length}×1m) — replaying…`);
+
+    // FULL-UNLOCK: every strategy that reaches a tradePlan takes its OWN slot (one open position per
+    // strategy per symbol, concurrent), so all 14 get a real per-strategy track record — not just the
+    // single top signal. Portfolio caps + regime routing are intentionally OFF here to grade raw edge.
+    let openTrades: PaperTrade[] = [];
+    const perStratDay = new Map<string, number>();          // `${strategyId}|${day}` → entries today
     let entered = 0;
+    // Moving pointers: iso advances monotonically, so instead of re-filtering each whole array per
+    // bar (O(n)/bar — the 10k-bar 1m array was the killer), advance a pointer (amortized O(n) total).
+    let pOne = 0, pFif = 0, pH1 = 0, pNF = 0, pNFif = 0, pNH1 = 0;
+
+    const recordClose = (t: PaperTrade, eodPrice: number | null) => {
+      const gross = eodPrice === null
+        ? (t.pnl ?? 0)
+        : (t.direction === 'BEAR' ? (t.entry - eodPrice) * t.quantity : (eodPrice - t.entry) * t.quantity);
+      const net = gross - nseRoundTripCost(t.entry, t.quantity);
+      const riskAmt = Math.abs(t.entry - t.stop) * t.quantity;
+      closedTrades.push({ strategyId: t.strategyId ?? 'unknown', group: t.signalGroup ?? 'UNCLASSIFIED', netPnl: net, r: riskAmt > 0 ? net / riskAmt : 0 });
+      equity += net; equityCurve.push(equity);
+    };
 
     for (let i = 50; i < five.length; i++) {
+      if (i % 500 === 0) console.log(`  ${sym} bar ${i}/${five.length}  (${entered} entries, ${openTrades.length} open)`);
       const bar = five[i];
       const iso = bar.time;
       _mockMs = new RealDate(iso).getTime();
-      const day = istDateOf(iso);
+      const day = fiveIst[i];
+      while (pOne  < one.length         && one[pOne].time          <= iso) pOne++;
+      while (pFif  < fifteen.length      && fifteen[pFif].time      <= iso) pFif++;
+      while (pH1   < h1.length           && h1[pH1].time            <= iso) pH1++;
+      while (pNF   < niftyFive.length    && niftyFive[pNF].time     <= iso) pNF++;
+      while (pNFif < niftyFifteen.length && niftyFifteen[pNFif].time <= iso) pNFif++;
+      while (pNH1  < niftyH1.length      && niftyH1[pNH1].time      <= iso) pNH1++;
 
-      // ── manage an open position on this bar ──
-      if (open) {
-        const monRows = [{ symbol: sym, price: bar.close, vwap: open.entry } as never];
-        const { trades: upd, changed } = monitorPaperTrades([open], monRows as never);
-        if (changed && upd[0].status === 'Closed') {
-          const t = upd[0];
-          const gross = t.pnl ?? 0;
-          const net = gross - nseRoundTripCost(t.entry, t.quantity);
-          const riskAmt = Math.abs(t.entry - t.stop) * t.quantity;
-          closedTrades.push({ strategyId: t.strategyId ?? 'unknown', group: t.signalGroup ?? 'UNCLASSIFIED', netPnl: net, r: riskAmt > 0 ? net / riskAmt : 0 });
-          equity += net; equityCurve.push(equity);
-          open = null;
-        } else {
-          open = upd[0];
-        }
+      // ── manage all open positions on this bar ──
+      if (openTrades.length) {
+        const sessVwap = sessionVwap(five.slice(Math.max(0, i - 78), i + 1)) || bar.close;
+        const monRows = [{ symbol: sym, price: bar.close, vwap: sessVwap } as never];
+        const { trades: upd } = monitorPaperTrades(openTrades, monRows as never);
+        const stillOpen: PaperTrade[] = [];
+        for (const t of upd) { if (t.status === 'Closed') recordClose(t, null); else stillOpen.push(t); }
+        openTrades = stillOpen;
       }
 
-      // ── EOD force-close (last bar of the day) ──
-      const nextDay = i + 1 < five.length ? istDateOf(five[i + 1].time) : null;
-      if (open && nextDay !== day) {
-        const gross = open.direction === 'BEAR' ? (open.entry - bar.close) * open.quantity : (bar.close - open.entry) * open.quantity;
-        const net = gross - nseRoundTripCost(open.entry, open.quantity);
-        const riskAmt = Math.abs(open.entry - open.stop) * open.quantity;
-        closedTrades.push({ strategyId: open.strategyId ?? 'unknown', group: open.signalGroup ?? 'UNCLASSIFIED', netPnl: net, r: riskAmt > 0 ? net / riskAmt : 0 });
-        equity += net; equityCurve.push(equity); open = null;
-      }
-
-      if (open) continue;                                   // one position per symbol at a time
-      if ((entriesPerDay.get(day) ?? 0) >= 3) continue;     // cap 3 entries/symbol/day
+      // ── EOD force-close every open position (last bar of the day) ──
+      const nextDay = i + 1 < five.length ? fiveIst[i + 1] : null;
+      const isLastBarOfDay = nextDay !== day;
+      if (openTrades.length && isLastBarOfDay) { for (const t of openTrades) recordClose(t, bar.close); openTrades = []; }
+      if (isLastBarOfDay) continue;                         // don't open intraday trades that can't be held
 
       // ── build the StrategyInput slices up to T ──
-      const fiveS = five.slice(0, i + 1);
-      const fifteenS = upTo(fifteen, iso);
-      const oneS = upTo(one, iso);
-      const h1S = upTo(h1, iso);
-      const dailyS = daily.filter((b) => istDateOf(b.time) <= day);
+      // last 200 bars only — buildRowFromAlpaca/strategies use at most the last ~120; slicing the full
+      // growing history each bar was O(n²) allocation (the memory balloon).
+      const fiveS = five.slice(Math.max(0, i - 199), i + 1);
+      const fifteenS = fifteen.slice(Math.max(0, pFif - 120), pFif);
+      const oneS = one.slice(Math.max(0, pOne - 200), pOne);
+      const h1S = h1.slice(Math.max(0, pH1 - 80), pH1);
+      const dailyS = daily.filter((_, idx) => dailyIst[idx] <= day);
       if (dailyS.length < 205) continue;
 
-      const today = fiveS.filter((b) => istDateOf(b.time) === day);
+      // today's 5m bars = contiguous run ending at i with the same IST date (O(bars-in-day), not O(i))
+      let tStart = i;
+      while (tStart > 0 && fiveIst[tStart - 1] === day) tStart--;
+      const today = five.slice(tStart, i + 1);
       if (!today.length) continue;
-      const prevDaily = dailyS[dailyS.length - 1] && istDateOf(dailyS[dailyS.length - 1].time) === day ? dailyS[dailyS.length - 2] : dailyS[dailyS.length - 1];
+      // prevDaily = last daily bar strictly before today's date (yesterday's bar)
+      let prevIdx = -1;
+      for (let k = 0; k < daily.length; k++) { if (dailyIst[k] < day) prevIdx = k; else break; }
+      const prevDaily = prevIdx >= 0 ? daily[prevIdx] : null;
       const prevClose = prevDaily?.close ?? bar.close;
       const todayVol = today.reduce((s, b) => s + b.volume, 0);
       const avgVol = dailyS.slice(-21, -1).reduce((s, b) => s + b.volume, 0) / 20 || 1;
       const minsIn = (_mockMs - new RealDate(today[0].time).getTime()) / 60000;
-      const sessFactor = Math.min(1, Math.max(0.05, minsIn / 375));
+      const sessFactor = nseSessionVolumeFraction(minsIn); // front-loaded NSE curve (not linear)
       const meta = {
         symbol: sym, price: bar.close, prevClose,
         gapPct: prevClose > 0 ? ((today[0].open - prevClose) / prevClose) * 100 : 0,
@@ -213,13 +260,15 @@ async function main(): Promise<void> {
       };
 
       // benchmark / regime at T
-      const nF = upTo(niftyFive, iso), nFif = upTo(niftyFifteen, iso), nH1 = upTo(niftyH1, iso);
-      const nD = niftyDaily.filter((b) => istDateOf(b.time) <= day);
+      // cap benchmark windows fed to candleTrend (shared engine fn iterates the whole array with
+      // slow tz calls) — only the current session matters for the trend call.
+      const nF = niftyFive.slice(Math.max(0, pNF - 120), pNF), nFif = niftyFifteen.slice(Math.max(0, pNFif - 120), pNFif), nH1 = niftyH1.slice(Math.max(0, pNH1 - 60), pNH1);
+      const nD = niftyDaily.filter((_, idx) => niftyDailyIst[idx] <= day);
       const spyTrend5m = candleTrend(nF, 0.001);
       const spyTrend15m = candleTrend(nFif, 0.001);
       const nh = nH1.slice(-5);
       const spyChangePct = nh.length >= 4 && nh[nh.length - 4].close > 0 ? (last(nh).close - nh[nh.length - 4].close) / nh[nh.length - 4].close : 0;
-      const vixLevel = vixDaily.filter((b) => istDateOf(b.time) <= day).slice(-1)[0]?.close ?? null;
+      const vixLevel = vixDaily.filter((_, idx) => vixIst[idx] <= day).slice(-1)[0]?.close ?? null;
       const e200 = ema(closes(nD), 200);
       const regime = classifyMarketRegime({ spyPrice: nD.length ? last(nD).close : null, spyEma200: e200.length >= 200 ? last(e200) : null, vixLevel });
 
@@ -228,18 +277,26 @@ async function main(): Promise<void> {
 
       const row = buildRowFromAlpaca(sym, meta, candleSet, providerStatus, 'none', {}, null, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, nD);
 
-      // ── executor gates (per-strategy edge — portfolio caps intentionally excluded) ──
-      if (!row.qualified || !row.tradePlan) continue;
+      // ── entry gates (raw per-strategy edge; portfolio caps + regime routing intentionally OFF) ──
+      if (!row.basePass) continue;                          // liquidity/price/ATR sanity only
       if (row.adrExhausted) continue;
-      const sig = row.primaryStrategy;
-      if (!sig || !regimeAllows(sig.strategyId, regime.regime)) continue;
-
       const vixMult = vixLevel !== null && vixLevel > 30 ? 0 : vixLevel !== null && vixLevel > 20 ? 0.5 : 1;
       if (vixMult === 0) continue;
-      const t = buildPaperTrade(row, [], iso, ACCOUNT, spyTrend5m, spyTrend15m, vixMult * regime.sizeMult);
-      if (!t) continue;
-      open = t; entered++;
-      entriesPerDay.set(day, (entriesPerDay.get(day) ?? 0) + 1);
+
+      // Full per-strategy grading: every strategy with a tradePlan takes its own slot (one open per
+      // strategy/symbol, cap 3/day) — grades each strategy's raw edge on this universe.
+      for (const s of row.strategySignals) {
+        if (!s.tradePlan) continue;
+        if (ONLY && s.strategyId !== ONLY) continue;   // BT_ONLY=<id> isolates a single strategy for grading
+        if (openTrades.some((t) => t.strategyId === s.strategyId)) continue;
+        const dk = `${s.strategyId}|${day}`;
+        if ((perStratDay.get(dk) ?? 0) >= 3) continue;
+        const sigRow = { ...row, primaryStrategy: s, tradePlan: s.tradePlan, direction: s.direction };
+        const t = buildPaperTrade(sigRow, openTrades, iso, ACCOUNT, spyTrend5m, spyTrend15m, vixMult * regime.sizeMult);
+        if (!t) continue;
+        openTrades.push(t); entered++;
+        perStratDay.set(dk, (perStratDay.get(dk) ?? 0) + 1);
+      }
     }
     console.log(`${sym.padEnd(11)} ${five.length}×5m bars → ${entered} entries`);
   }
@@ -268,10 +325,20 @@ function report(trades: Closed[], equity: number[]): void {
     console.log(`${pass ? 'PASS' : '----'} ${label.padEnd(18)} n=${String(list.length).padStart(3)}  WR=${wr.toFixed(0).padStart(3)}%  PF=${pf === Infinity ? '∞' : pf.toFixed(2)}  avgR=${avgR.toFixed(2)}  net=₹${net.toFixed(0)}`);
   };
 
-  console.log('\n-- by strategy --');
-  [...byKey((t) => t.strategyId).entries()].sort((a, b) => b[1].length - a[1].length).forEach(([k, v]) => grade(k, v));
-  console.log('\n-- by tier --');
-  [...byKey((t) => t.group).entries()].sort((a, b) => b[1].length - a[1].length).forEach(([k, v]) => grade(k, v));
+  console.log('\n-- by strategy (all 14; entries = times selected as the primary/traded signal) --');
+  const ALL_STRATEGIES = [
+    'orb_retest', 'vwap_pullback', 'rs_continuation', 'liquidity_sweep', 'ob_fvg_retest',
+    'mss_breakout', 's7_volume_surge', 'ema20_bounce', 'flag_break', 'orb15m_retest',
+    'vwap15m_pullback', 'ema20_bounce_15m', 'range_reversion', 'sniper_1m',
+  ];
+  const byStrat = byKey((t) => t.strategyId);
+  // every strategy gets a line (n=0 for those that never traded), ordered by trade count
+  const orderedStrats = [...ALL_STRATEGIES].sort((a, b) => (byStrat.get(b)?.length ?? 0) - (byStrat.get(a)?.length ?? 0));
+  orderedStrats.forEach((s) => { const v = byStrat.get(s); if (v && v.length) grade(s, v); else console.log(`---- ${s.padEnd(18)} n=  0  (no trades)`); });
+  console.log('\n-- by tier (all 9 confluence groups) --');
+  const ALL_GROUPS = ['GOLD', 'BLUE', 'TREND', 'FVG', 'BREAKOUT', 'PULLBACK', 'MOMENTUM', 'SIDEWAYS', 'UNCLASSIFIED'];
+  const byGroup = byKey((t) => t.group);
+  ALL_GROUPS.forEach((g) => { const v = byGroup.get(g); if (v && v.length) grade(g, v); else console.log(`---- ${g.padEnd(18)} n=  0  (no trades)`); });
 
   const totNet = trades.reduce((s, t) => s + t.netPnl, 0);
   let peak = 0, dd = 0, cum = 0;

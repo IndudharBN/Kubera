@@ -66,9 +66,9 @@ function riskSnapshot(accountBalance: number) {
 const app = express();
 app.use(express.json());
 
-// Allow React dev server at port 3006 to call this API
+// Allow React dev server at port 5004 (Kubera UI) to call this API
 app.use((_req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3006');
+  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5004');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (_req.method === 'OPTIONS') { res.sendStatus(204); return; }

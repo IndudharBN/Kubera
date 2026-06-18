@@ -1,4 +1,5 @@
 import { Candle, closes, highs, last, lows, round, volumes } from './ohlcv';
+import { etDateOf, etMinsOf } from './tzfast';
 
 export function ema(values: number[], period: number) {
   if (!values.length) return [];
@@ -88,12 +89,8 @@ export function vwapSlope(candles: Candle[], lookback = 3, period = 20) {
 // Filter candles to today's regular session (9:30 AM ET onwards only)
 export function sessionCandles(candles: Candle[]): Candle[] {
   const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-  return candles.filter(c => {
-    const d = new Date(c.time);
-    if (d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) !== todayET) return false;
-    const etLocal = new Date(d.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    return etLocal.getHours() * 60 + etLocal.getMinutes() >= 9 * 60 + 30;
-  });
+  // memoized per-candle tz conversions (identical output, ~free after first call) — see tzfast.ts
+  return candles.filter(c => etDateOf(c.time) === todayET && etMinsOf(c.time) >= 9 * 60 + 30);
 }
 
 // Cumulative session VWAP from 9:30 AM — single anchor for the whole day

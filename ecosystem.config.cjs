@@ -35,9 +35,9 @@ module.exports = {
     },
 
     {
-      name: 'sutra-ui',
+      name: 'kubera-ui',
       script: './node_modules/vite/bin/vite.js',
-      args: '--port=3006 --host=0.0.0.0',
+      args: '--port=5004 --host=0.0.0.0',
       cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',

@@ -6,6 +6,7 @@ import { ema, sessionCandles, sessionVwap, sessionVwapSlope } from './indicators
 import type { Candle, CandleSet } from './ohlcv';
 import { closes, last, round } from './ohlcv';
 import { evaluateStrategies } from './strategyEngine';
+import { istDateOf, istHourOf, istMinuteOf } from './tzfast';
 import { stampGroupClassification } from './confluenceClassifier';
 import type { MarketDataProviderStatus, StrategyId, StrategySignal, WorkflowStage } from './workflowTypes';
 import { workflowStageRank } from './workflowTypes';
@@ -139,8 +140,7 @@ export function candleTrend(candles: Candle[], minVwapDist = 0) {
     // Yesterday's last close: walk backwards to find most recent non-today bar
     let prevClose = todayOpen;
     for (let i = candles.length - 1; i >= 0; i--) {
-      const d = new Date(candles[i].time);
-      if (d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) !== todayET) {
+      if (istDateOf(candles[i].time) !== todayET) {
         prevClose = candles[i].close;
         break;
       }
@@ -211,11 +211,11 @@ function computePrevDay(daily: Candle[]): { high: number; low: number; close: nu
 }
 
 function etHour(isoTime: string): number {
-  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  return istHourOf(isoTime); // memoized — identical to toLocaleString hour in Asia/Kolkata
 }
 
 function etMinute(isoTime: string): number {
-  return parseInt(new Date(isoTime).toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
+  return istMinuteOf(isoTime); // memoized
 }
 
 function isPremarket(isoTime: string): boolean {
@@ -279,8 +279,10 @@ function scoreRow(input: {
   if (input.trend15mAligned) { score += 13; reasons.push('15m directional'); }
   else reasons.push('15m not directional');
 
-  if (input.atrPct >= 3.5) { score += 7; reasons.push('high intraday range potential'); }
-  else if (input.atrPct >= 2.5) { score += 4; reasons.push('range acceptable'); }
+  // NSE-calibrated ATR% bands: large-caps run ~1–2.5% daily ATR (vs US momentum 3–8%),
+  // so the US ≥3.5/≥2.5 bands scored ~0 on NSE. High ≥2.0%, acceptable ≥1.2%.
+  if (input.atrPct >= 2.0) { score += 7; reasons.push('high intraday range potential'); }
+  else if (input.atrPct >= 1.2) { score += 4; reasons.push('range acceptable'); }
   else reasons.push('range low');
 
   if (input.dollarVolM >= 25) { score += 6; reasons.push('liquid'); }
@@ -341,7 +343,7 @@ export function buildRowFromAlpaca(
   // Hard ADR-exhaustion: once today's range ≥ full ATR20, the move is largely done —
   // block new entries (vs Sutra's size-halving). Stock-analyzer ADR_EXHAUST_PCT behavior.
   const todayD = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  const todayFive = five.filter((c) => new Date(c.time).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayD);
+  const todayFive = five.filter((c) => istDateOf(c.time) === todayD);
   const dayRange = todayFive.length ? Math.max(...todayFive.map((c) => c.high)) - Math.min(...todayFive.map((c) => c.low)) : 0;
   const adrExhausted = atr20 > 0 && dayRange >= atr20;
 
@@ -436,7 +438,13 @@ export function buildRowFromAlpaca(
     direction,
     price: round(price, 2),
     score: scored.score,
-    qualified: basePass && scored.score >= 65 && meta.rvolEst >= 0.8 && vwapAligned && trendAligned && trend15mAligned,
+    // NSE-relaxed gate: trust the strategy's own confirmation. A non-null tradePlan means the
+    // primary strategy reached trade_ready+ (capScoutSignals nulls the plan below that), so the
+    // strategy's structure + direction are already validated. basePass keeps the price/ATR/liquidity
+    // sanity floor. The prior US-scanner overlay (score≥65 + VWAP/5m/15m triple-alignment) vetoed
+    // ~100% of NSE large-cap setups despite valid plans on 62% of bars (see backtest/btDiag) — it
+    // was calibrated for high-volatility US momentum names, not calm NSE mega-caps.
+    qualified: basePass && !!(primaryStrategy && primaryStrategy.tradePlan),
     reason: `${baseReason} | ${scored.reason}`,
     atr20: round(atr20, 3),
     atrPct: round(atrPct, 2),

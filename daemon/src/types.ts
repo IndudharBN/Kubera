@@ -33,6 +33,8 @@ export interface PaperTrade {
   target2: number;
   trailingStop: number;
   t1HitAt?: string;
+  scaleOutQty?: number;   // shares exited at T1 (50% scale-out); remainder rides to T2/BE
+  scaleOutPnl?: number;   // realized ₹ from the T1 scale-out leg
   rr: number;
   rr1: number;
   quantity: number;
@@ -47,6 +49,7 @@ export interface PaperTrade {
   beta?: number;
   alpacaOrderId?: string;
   stopOrderId?: string; // resting Kite SL-M — cancelled when the daemon closes the position (OCO)
+  tpOrderId?: string;   // resting Kite TP-LIMIT at T2 — cancelled when the daemon closes the position (OCO)
 }
 
 export interface RiskSettings {
@@ -55,6 +58,7 @@ export interface RiskSettings {
   maxPositions: number;
   cbLossThreshold: number;
   disabledStrategies: string[];
+  sizeMultiplier: number;      // global position-size scaler (sizing sweep → chosen live level)
   deployCapPct: number;        // max combined open notional as fraction of capital
   dailyProfitHalfPct: number;  // at +X% day P&L → halve new-trade size
   dailyProfitStopPct: number;  // at +X% day P&L → stop new entries for the day
@@ -65,9 +69,15 @@ export interface RiskSettings {
 export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   riskPerTradePct: 0.03,
   dailyLossLimitPct: 0.03,   // −3% daily-loss kill
-  maxPositions: 3,           // max concurrent total
+  maxPositions: 5,           // max concurrent total (raised 3→5 to capture more of the book's edge)
   cbLossThreshold: 3,
-  disabledStrategies: [],
+  // Data-driven disable (high-beta + large-cap backtests). KEEP (7 winners + tuned S5): liquidity_sweep,
+  // vwap15m_pullback, orb_retest, orb15m_retest, sniper_1m, flag_break, ema20_bounce_15m, ob_fvg_retest(tuned).
+  //   vwap_pullback   — 33% WR, broken.        s7_volume_surge — 34% WR, no edge.
+  //   rs_continuation — never fires (scout).   range_reversion — never fires (setup unmet).
+  //   mss_breakout    — 46% WR even on movers.  ema20_bounce(5m) — 48% WR; the 15m variant works, 5m too noisy.
+  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce'],
+  sizeMultiplier: 2.0,       // 2× sizing — backtest: ~0.9%/day @ ~1.8% maxDD (live ~0.5-0.7% after caps/slippage)
   deployCapPct: 0.70,        // ≤70% of capital deployed
   dailyProfitHalfPct: 0.02,  // +2% → half size
   dailyProfitStopPct: 0.03,  // +3% → done for the day

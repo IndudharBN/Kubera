@@ -1,7 +1,7 @@
-// Singleton WebSocket client for the Sutra daemon push events.
+// Singleton WebSocket client for the Kubera daemon push events.
 // Auto-reconnects with 3s backoff. Typed event subscriptions.
 
-const WS_URL = 'ws://localhost:3001/ws';
+const WS_URL = 'ws://localhost:5003/ws';
 
 export type DaemonWsEvent =
   | 'snapshot_update'

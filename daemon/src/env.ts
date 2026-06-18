@@ -13,7 +13,7 @@ export const env = {
   ALPACA_SECRET:   process.env['ALPACA_SECRET'] ?? '',
   ALPACA_BASE_URL: process.env['ALPACA_BASE_URL'] ?? 'https://paper-api.alpaca.markets',
 
-  DAEMON_PORT:  parseInt(process.env['DAEMON_PORT'] ?? '3001', 10),
+  DAEMON_PORT:  parseInt(process.env['DAEMON_PORT'] ?? '5003', 10), // Kubera backend = 5003 (Sutra uses 3001)
   // Safety: execution is OFF unless explicitly enabled (shadow-first posture).
   AUTO_EXECUTE: process.env['DAEMON_AUTO_EXECUTE'] === 'true',
 };

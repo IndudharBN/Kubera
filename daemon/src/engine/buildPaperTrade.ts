@@ -77,7 +77,7 @@ export function buildPaperTrade(
   const signalGroup = row.primaryStrategy?.signalGroup ?? 'UNCLASSIFIED';
   const sigGroupSizeMult = row.primaryStrategy?.groupSizeMult ?? 1.0;
   const baseNotional = computeNotional(accountBalance, plan.entry, plan.stop, signalGroup, sigGroupSizeMult);
-  const adjustedNotional = baseNotional * effectiveMult * cbSizeMult;
+  const adjustedNotional = baseNotional * effectiveMult * cbSizeMult * getRiskSettings().sizeMultiplier;
   const budgetCap = availablePaperNotional(currentTrades, accountBalance);
   const notional = Math.min(budgetCap, adjustedNotional);
   if (notional <= 0) return null;

@@ -21,3 +21,7 @@ data/universe-cache.json
 
 # IDE
 .idea/
+
+# session token (regenerates daily) + scratch backtest output
+data/kite-token.json
+data/bt_*.txt
