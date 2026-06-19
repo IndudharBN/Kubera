@@ -55,7 +55,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (i < items.length) {
       const idx = i++;
-      try { out[idx] = await fn(items[idx]); } catch { out[idx] = undefined as unknown as R; }
+      try { out[idx] = await fn(items[idx]); }
+      catch (e) { out[idx] = undefined as unknown as R; console.warn(`[mapLimit] ${String(items[idx])} failed:`, (e as Error).message); }
     }
   });
   await Promise.all(workers);
@@ -159,7 +160,7 @@ export async function fetchUniverseMeta(symbols: string[]): Promise<SymbolMeta[]
       prevDayHigh: prevBar?.high ?? 0, prevDayLow: prevBar?.low ?? 0,
     };
   });
-  return metas.filter((m): m is SymbolMeta => m !== null);
+  return metas.filter((m): m is SymbolMeta => m != null); // != null drops BOTH null and mapLimit's undefined-on-error holes
 }
 
 export function selectTopSymbols(metas: SymbolMeta[], n = UNIVERSE_TARGET): string[] {

@@ -38,11 +38,6 @@ function capScoutSignals(signals: StrategySignal[]): StrategySignal[] {
   });
 }
 
-const DEFAULT_LIVE_UNIVERSE = [
-  'LITE', 'VIAV', 'CIEN', 'SNDK', 'MRVL', 'GLW', 'DOCN', 'STX', 'CAVA', 'PL', 'ON', 'GFS', 'ESI', 'RSI', 'HPE', 'ATI', 'FLEX', 'SMTC', 'CAT', 'CENX', 'AVGO', 'ADI', 'RVMD', 'ALGM', 'ANET', 'AMAT', 'BTSG', 'STT', 'HWM', 'TPR', 'NET', 'C', 'APG', 'TWLO', 'ALLY', 'MU', 'MRNA', 'ROKU', 'GTES', 'DECK', 'XYZ', 'LEVI', 'VFC', 'ABNB', 'MCHP', 'NVDA', 'MS', 'DD', 'AMD', 'NRG', 'FLR', 'DAL', 'IBKR', 'AMZN', 'GE', 'ARWR', 'ALB', 'GS', 'SYF', 'GOOGL', 'PPG', 'GOOG', 'CCL', 'META', 'NXT', 'APH', 'GAP', 'BBIO', 'COF', 'LNC', 'EQH', 'CRBG', 'CMG', 'IP', 'SARO', 'SNOW', 'KTOS', 'FLUT', 'GM', 'EXPE', 'ORCL', 'EMR', 'DDOG', 'RCL', 'IR', 'TRMB', 'ELAN', 'CRH', 'NCLH', 'BAM', 'MP', 'BKNG', 'AFRM', 'APO', 'TRU', 'VNO', 'SNPS', 'UAL', 'DASH', 'SGI', 'PYPL', 'CHWY', 'BROS', 'TECH', 'IVZ', 'AXTA', 'TEM', 'TOST', 'CG', 'PLTR', 'KKR', 'CVNA', 'RBLX', 'BRKR', 'UEC', 'GH', 'ARES', 'JEF', 'KRMN', 'RDDT', 'SOFI', 'IQV', 'BLDR', 'FOUR', 'LMND', 'TPG', 'FND', 'ASTS', 'Z', 'SAIL', 'EL', 'U', 'HL',
-  'TSLA', 'AAPL', 'MSFT', 'NFLX', 'UBER', 'LYFT', 'COIN', 'SQ', 'SHOP', 'CRWD', 'ZS', 'PANW', 'OKTA', 'SPLK', 'PATH', 'AI', 'SOUN', 'BBAI', 'IONQ', 'RGTI', 'QBTS', 'DJT', 'SMCI', 'WOLF', 'LUNR', 'SPCE', 'RKT', 'HIMS', 'ACHR',
-];
-
 export interface ProTradeRow {
   symbol: string;
   company: string;
@@ -533,9 +528,9 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
   // Pre-warm earnings calendar so the universe build can filter earnings-day stocks
   await fetchEarningsCalendar();
 
-  // Dynamic universe: Alpaca screener → beta/ADR% gates → top 90, cached 6h.
-  // Falls back to static DEFAULT_LIVE_UNIVERSE if screener is unavailable.
-  const rawUniverse = await buildDynamicUniverse(pinnedSymbols, DEFAULT_LIVE_UNIVERSE);
+  // Dynamic universe: screener → liquidity/ATR% gates → cached. The Kite path falls back to its
+  // own NSE_SEED internally; pass [] so no US tickers can leak in (the old US fallback was dead code).
+  const rawUniverse = await buildDynamicUniverse(pinnedSymbols, []);
 
   // Exclude stocks with earnings today, tomorrow, or yesterday — binary event risk
   const universe = rawUniverse.filter(sym => {

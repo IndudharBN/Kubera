@@ -4,6 +4,7 @@ import { loadState, saveState, getState } from './stateStore';
 import { startScheduler } from './scheduler';
 import { startHttpServer } from './httpServer';
 import { ensureKiteLogin } from './kite/kiteLogin';
+import { loadInstruments } from './kite/kiteClient';
 
 // Safety net: a transient network timeout (AbortSignal.timeout) or any stray async
 // rejection must never hard-kill the trading daemon. Node 24 crashes the process on
@@ -32,9 +33,14 @@ async function main() {
   saveState();
   console.log(`[kubera-daemon] state saved to disk ✓`);
 
-  // Refresh the daily Kite token before arming the scheduler (best-effort; warns if absent).
+  // Refresh the daily Kite token AND load the instrument (symbol→token) map before arming the
+  // scheduler. Without loadInstruments() every quote/bar call throws "Instruments not loaded" and
+  // the daemon scans blind (0 rows) — the backtests called it explicitly, the live daemon never did.
   if (env.BROKER === 'kite') {
     await ensureKiteLogin().catch((e) => console.error('[kite] ensureKiteLogin error:', (e as Error).message));
+    await loadInstruments('NSE')
+      .then(() => console.log('[kite] instruments loaded ✓'))
+      .catch((e) => console.error('[kite] loadInstruments FAILED — daemon will scan blind:', (e as Error).message));
   }
 
   const s = getState();

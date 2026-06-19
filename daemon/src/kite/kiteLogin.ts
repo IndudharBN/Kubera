@@ -67,6 +67,28 @@ function loadTodaysToken(): string | null {
   } catch { return null; }
 }
 
+function clearToken(): void {
+  try { if (fs.existsSync(TOKEN_FILE)) fs.unlinkSync(TOKEN_FILE); } catch { /* best-effort */ }
+}
+
+/**
+ * Confirm a token is actually accepted by Kite (a live getProfile call). The IST-date freshness
+ * check is blind to Kite's ~07:30 IST expiry boundary — a token minted late-evening IST shares
+ * today's IST date yet is already dead after the 07:30 reset. A live probe is the only reliable
+ * staleness test, and it's the difference between the daemon trading and silently going blind.
+ */
+async function validateToken(token: string): Promise<boolean> {
+  if (!token || !kiteEnv.API_KEY) return false;
+  try {
+    const kc = new KiteConnect({ api_key: kiteEnv.API_KEY });
+    kc.setAccessToken(token);
+    await kc.getProfile();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function cookieHeader(setCookies: string[]): string {
   return setCookies.map((c) => c.split(';')[0]).join('; ');
 }
@@ -142,18 +164,29 @@ export async function autoLogin(): Promise<string> {
  * Never throws — logs and returns false so the daemon still boots (and warns).
  */
 export async function ensureKiteLogin(): Promise<boolean> {
-  if (accessToken()) return true;
+  // 1. Already-active token (env KITE_ACCESS_TOKEN or runtime) — trust it ONLY if Kite accepts it.
+  const active = accessToken();
+  if (active && (await validateToken(active))) return true;
 
+  // 2. Token persisted from an earlier login today — validate against Kite before reusing.
   const cached = loadTodaysToken();
-  if (cached) { setRuntimeAccessToken(cached); console.log('[kite] using today’s cached access token'); return true; }
+  if (cached && cached !== active && (await validateToken(cached))) {
+    setRuntimeAccessToken(cached);
+    console.log('[kite] using cached access token (validated)');
+    return true;
+  }
+
+  // Whatever token we had is stale/rejected → drop it and force a fresh TOTP login.
+  if (cached || active) console.warn('[kite] cached/active token rejected by Kite (expired) — re-authenticating via TOTP');
+  clearToken();
 
   if (!(kiteEnv.USER_ID && kiteEnv.PASSWORD && kiteEnv.TOTP_SECRET)) {
-    console.warn('[kite] no access token and no auto-login creds — set KITE_ACCESS_TOKEN or KITE_USER_ID/PASSWORD/TOTP_SECRET in daemon/.env.daemon');
+    console.warn('[kite] no valid access token and no auto-login creds — set KITE_ACCESS_TOKEN or KITE_USER_ID/PASSWORD/TOTP_SECRET in daemon/.env.daemon');
     return false;
   }
   try {
     await autoLogin();
-    console.log('[kite] auto-login OK — access token refreshed');
+    console.log('[kite] auto-login OK — fresh access token');
     return true;
   } catch (err) {
     console.error('[kite] auto-login FAILED —', (err as Error).message,

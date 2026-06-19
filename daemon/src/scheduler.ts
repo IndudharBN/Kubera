@@ -169,12 +169,12 @@ function tryFireTrades(): void {
 
   for (const row of snapshot.rows) {
     if (!row.qualified || !row.tradePlan) continue;
-    if (state.firedToday.includes(row.symbol)) continue;
     if (row.adrExhausted) { console.log(`[executor] ${row.symbol} ADR exhausted — no new entry`); continue; }
     if (Date.now() - lastOrderAt < 2500) break; // order-rate throttle (≤1 entry / ~2.5s)
 
     const sig = row.primaryStrategy;
     if (!sig) continue;
+    const stratId = sig.strategyId ?? 'unknown';
 
     // Regime router: trend (BULL/BEAR) disables mean-reversion (S13);
     // range (SIDEWAYS) suppresses breakouts (S1/S6/S9/S7).
@@ -183,12 +183,19 @@ function tryFireTrades(): void {
       continue;
     }
 
-    // Concurrency caps: max total + max 2 per strategy + max 2 per direction (net exposure)
     const openNow = trades.filter((t: { status: string }) => t.status === 'Open');
+    // ≤3 entries per (strategy, symbol) per day — matches the backtest's re-entry cap.
+    if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) continue;
+    // Never two of the SAME strategy on the SAME symbol concurrently (no doubling one setup).
+    if (openNow.some((t: { strategyId: string | null; symbol: string }) => t.strategyId === stratId && t.symbol === row.symbol)) continue;
+    // Max concurrent total.
     if (openNow.length >= getRiskSettings().maxPositions) break;
-    if (sig.strategyId && openNow.filter((t: { strategyId: string | null }) => t.strategyId === sig.strategyId).length >= 2) continue;
-    if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 2) {
-      console.log(`[executor] ${row.symbol} net-direction cap (≥2 ${sig.direction}) — correlated, skip`);
+    // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
+    const stratCap = (stratId === 'liquidity_sweep' || stratId === 'vwap15m_pullback') ? 3 : 2;
+    if (openNow.filter((t: { strategyId: string | null }) => t.strategyId === stratId).length >= stratCap) continue;
+    // Per-direction concurrent (net exposure correlation guard).
+    if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 3) {
+      console.log(`[executor] ${row.symbol} net-direction cap (≥3 ${sig.direction}) — correlated, skip`);
       continue;
     }
 
@@ -263,7 +270,7 @@ function tryFireTrades(): void {
     }
 
     // Mark fired so we don't double-fire this session
-    setState((s) => ({ ...s, firedToday: [...s.firedToday, row.symbol] }));
+    setState((s) => ({ ...s, firedToday: [...s.firedToday, `${row.symbol}|${sig.strategyId}`] }));
     saveState();
   }
 

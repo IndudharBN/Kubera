@@ -69,7 +69,7 @@ export interface RiskSettings {
 export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   riskPerTradePct: 0.03,
   dailyLossLimitPct: 0.03,   // −3% daily-loss kill
-  maxPositions: 5,           // max concurrent total (raised 3→5 to capture more of the book's edge)
+  maxPositions: 6,           // max concurrent total (6 = up to ~3 strategies × 2 each)
   cbLossThreshold: 3,
   // Data-driven disable (high-beta + large-cap backtests). KEEP (7 winners + tuned S5): liquidity_sweep,
   // vwap15m_pullback, orb_retest, orb15m_retest, sniper_1m, flag_break, ema20_bounce_15m, ob_fvg_retest(tuned).
