@@ -8,6 +8,7 @@ import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
 import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings, initDailyBalance } from './riskManager';
 import { kiteEnv } from './kite/kiteEnv';
+import { ensureKiteLogin } from './kite/kiteLogin';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
 import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions, cancelPaperOrder, getOrderMap } from './broker';
@@ -438,6 +439,16 @@ export function startScheduler(): void {
       .catch((err) => console.error('[scan] hot-set scan failed (will retry next cycle):', (err as Error).message))
       .finally(() => { hotScanRunning = false; });
   }, 20_000);
+
+  // Daily token self-heal: Kite tokens expire ~07:30 IST. If the daemon runs continuously across
+  // that reset (machine kept awake, never restarted), the boot-time login goes stale and every Kite
+  // call silently fails. Re-validate every 20 min and re-auth via TOTP only if expired — cheap
+  // (a getProfile probe) and keeps unattended/24-7 operation alive without a morning restart.
+  if (env.BROKER === 'kite') {
+    setInterval(() => {
+      ensureKiteLogin().catch((err) => console.warn('[kite] periodic re-auth failed:', (err as Error).message));
+    }, 20 * 60 * 1000);
+  }
 
   // Trade monitor every 10s
   setInterval(() => {
