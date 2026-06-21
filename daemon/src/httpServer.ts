@@ -10,11 +10,13 @@ import {
   checkDailyLossLimit,
   getGroupCbSummary,
   unpauseGroupCb,
+  getRiskSettings,
+  saveRiskSettings,
 } from './riskManager';
 import { getUniverseBuiltAt, isUniverseFallback, clearUniverseCache } from './marketData';
 import { closePaperTrade } from './engine/monitorTrades';
 import type { PaperTrade } from './types';
-import type { SignalGroup } from './types';
+import type { SignalGroup, RiskSettings } from './types';
 
 // ── WebSocket broadcast ────────────────────────────────────────────────────────
 
@@ -130,6 +132,32 @@ app.get('/api/risk', async (_req, res) => {
     res.json(riskSnapshot(balance));
   } catch {
     res.json(riskSnapshot(0));
+  }
+});
+
+// GET /api/risk/settings — the full live RiskSettings (the daemon is authoritative)
+app.get('/api/risk/settings', (_req, res) => {
+  res.json(getRiskSettings());
+});
+
+// POST /api/risk/settings — patch live settings (strategy on/off, risk %, caps…).
+// Takes effect on the next scan/executor cycle (getRiskSettings reads daemon state).
+app.post('/api/risk/settings', (req, res) => {
+  try {
+    const patch = (req.body ?? {}) as Partial<RiskSettings>;
+    const next: RiskSettings = { ...getRiskSettings(), ...patch };
+    // Clamp the user-tunable fields to sane bounds.
+    next.riskPerTradePct = Math.min(0.05, Math.max(0.005, next.riskPerTradePct));
+    next.dailyLossLimitPct = Math.min(0.20, Math.max(0.01, next.dailyLossLimitPct));
+    next.maxPositions = Math.min(10, Math.max(1, Math.round(next.maxPositions)));
+    next.cbLossThreshold = Math.min(10, Math.max(3, Math.round(next.cbLossThreshold)));
+    if (typeof next.sizeMultiplier === 'number') next.sizeMultiplier = Math.min(3, Math.max(0.5, next.sizeMultiplier));
+    if (!Array.isArray(next.disabledStrategies)) next.disabledStrategies = getRiskSettings().disabledStrategies;
+    saveRiskSettings(next);
+    emit('risk_update', { riskSettings: next });
+    res.json({ ok: true, riskSettings: getRiskSettings() });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
   }
 });
 

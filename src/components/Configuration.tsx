@@ -1,7 +1,7 @@
 import React from 'react';
 import { Activity, AlertTriangle, BarChart, CheckCircle2, Shield, Wallet, TrendingUp, Clock, Zap, RefreshCcw, Lock } from 'lucide-react';
 import { getRiskSettings, saveRiskSettings, getRiskSummary, type RiskSettings } from '../lib/riskManager';
-import { daemonClient } from '../lib/daemonClient';
+import { daemonClient, type DaemonRiskSettings } from '../lib/daemonClient';
 import { getPaperAccount } from '../lib/alpacaBroker';
 import { STRATEGY_LABELS, STRATEGY_CODES, type StrategyId } from '../features/protrade/workflowTypes';
 import { env, hasAlpacaConfig } from '../lib/env';
@@ -648,8 +648,16 @@ function NumInput({ label, value, min, max, step = 1, suffix, onChange }: {
 }
 
 export function SettingsScreen(_props: SettingsScreenProps) {
-  const [settings, setSettings] = React.useState<RiskSettings>(() => getRiskSettings());
+  // Seed from the local defaults (sane immediate render), then sync from the daemon — which is
+  // authoritative for what actually trades. Save writes back to the daemon (takes effect next scan).
+  const [settings, setSettings] = React.useState<DaemonRiskSettings>(() => ({
+    ...getRiskSettings(),
+    sizeMultiplier: 1, deployCapPct: 0.70, dailyProfitHalfPct: 0.02, dailyProfitStopPct: 0.03, maxDrawdownPct: 0.10,
+  }));
   const [saved, setSaved] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [synced, setSynced] = React.useState(false);
+  const [saveError, setSaveError] = React.useState('');
   const [alpacaEquity, setAlpacaEquity] = React.useState<string | null>(null);
   const [alpacaLoading, setAlpacaLoading] = React.useState(true);
 
@@ -658,17 +666,31 @@ export function SettingsScreen(_props: SettingsScreenProps) {
       .then((a) => setAlpacaEquity(String(a.equity)))
       .catch(() => setAlpacaEquity(null))
       .finally(() => setAlpacaLoading(false));
+    daemonClient.getRiskSettings()
+      .then((s) => { setSettings(s); setSynced(true); })
+      .catch(() => setSynced(false));
   }, []);
 
-  function update(patch: Partial<RiskSettings>) {
+  function update(patch: Partial<DaemonRiskSettings>) {
     setSettings((s) => ({ ...s, ...patch }));
     setSaved(false);
   }
 
-  function save() {
-    saveRiskSettings(settings);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  async function save() {
+    setSaving(true);
+    setSaveError('');
+    try {
+      const res = await daemonClient.saveRiskSettings(settings);
+      setSettings(res.riskSettings);
+      saveRiskSettings(settings); // mirror to local store so vestigial frontend reads stay aligned
+      setSynced(true);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'daemon unreachable');
+    } finally {
+      setSaving(false);
+    }
   }
 
   const riskSummary = getRiskSummary();
@@ -819,15 +841,21 @@ export function SettingsScreen(_props: SettingsScreenProps) {
       </section>
 
       {/* ── Save ── */}
-      <div className="flex justify-end">
+      <div className="flex justify-end items-center gap-3">
+        {saveError && <span className="text-[11px] text-rose-400 font-bold">⚠ {saveError}</span>}
+        <span className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${synced ? 'text-emerald-400' : 'text-amber-400'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${synced ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+          {synced ? 'Synced with daemon' : 'Daemon offline — local only'}
+        </span>
         <button
-          onClick={save}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all ${
+          onClick={() => void save()}
+          disabled={saving}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50 ${
             saved ? 'bg-emerald-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'
           }`}
         >
-          <RefreshCcw size={12} className={saved ? '' : ''} />
-          {saved ? 'Saved!' : 'Save Settings'}
+          <RefreshCcw size={12} className={saving ? 'animate-spin' : ''} />
+          {saving ? 'Saving…' : saved ? 'Saved to daemon!' : 'Save to daemon'}
         </button>
       </div>
     </div>

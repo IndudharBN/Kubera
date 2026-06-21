@@ -65,6 +65,20 @@ export interface DaemonWatchlist {
   symbols: string[];
 }
 
+// Full live RiskSettings as the daemon stores them (daemon/src/types.ts).
+export interface DaemonRiskSettings {
+  riskPerTradePct: number;
+  dailyLossLimitPct: number;
+  maxPositions: number;
+  cbLossThreshold: number;
+  disabledStrategies: string[];
+  sizeMultiplier: number;
+  deployCapPct: number;
+  dailyProfitHalfPct: number;
+  dailyProfitStopPct: number;
+  maxDrawdownPct: number;
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 
 export const daemonClient = {
@@ -79,6 +93,11 @@ export const daemonClient = {
   getOpenTrades: () => get<unknown[]>('/api/trades/open'),
 
   getRisk: () => get<DaemonRisk>('/api/risk'),
+
+  // Live RiskSettings (daemon-authoritative): read the full set, or patch it.
+  getRiskSettings: () => get<DaemonRiskSettings>('/api/risk/settings'),
+  saveRiskSettings: (patch: Partial<DaemonRiskSettings>) =>
+    post<{ ok: boolean; riskSettings: DaemonRiskSettings }>('/api/risk/settings', patch),
 
   getAccount: () => get<DaemonAccount>('/api/account'),
 
