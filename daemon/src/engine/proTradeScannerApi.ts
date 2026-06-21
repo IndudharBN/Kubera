@@ -429,7 +429,7 @@ export function buildRowFromAlpaca(
   return {
     symbol,
     company: symbol,
-    exchange: 'US',
+    exchange: 'NSE',
     direction,
     price: round(price, 2),
     score: scored.score,
