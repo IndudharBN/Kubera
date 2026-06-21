@@ -738,7 +738,24 @@ export function SettingsScreen(_props: SettingsScreenProps) {
           <NumInput label="Risk per Trade" value={Math.round(settings.riskPerTradePct * 100 * 10) / 10} min={0.5} max={5} step={0.5} suffix="% of account" onChange={(v) => update({ riskPerTradePct: v / 100 })} />
           <NumInput label="Daily Loss Limit" value={Math.round(settings.dailyLossLimitPct * 100)} min={3} max={20} step={1} suffix="% of account" onChange={(v) => update({ dailyLossLimitPct: v / 100 })} />
           <NumInput label="Max Concurrent Positions" value={settings.maxPositions} min={1} max={10} step={1} suffix="trades" onChange={(v) => update({ maxPositions: v })} />
-          <NumInput label="Circuit Breaker — Consecutive Losses" value={settings.cbLossThreshold} min={2} max={10} step={1} suffix="losses → 2hr pause" onChange={(v) => update({ cbLossThreshold: v })} />
+          <NumInput label="Circuit Breaker — Consecutive Losses" value={settings.cbLossThreshold} min={2} max={10} step={1} suffix="losses → 1hr pause" onChange={(v) => update({ cbLossThreshold: v })} />
+          <div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-1">Position Sizing</label>
+            <div className="flex gap-2">
+              {[1, 2, 3].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => update({ sizeMultiplier: m })}
+                  className={`flex-1 py-2 rounded-lg border text-xs font-black transition-all ${
+                    settings.sizeMultiplier === m
+                      ? 'border-indigo-500/50 bg-indigo-500/15 text-indigo-300'
+                      : 'border-white/10 bg-black/40 text-slate-500 hover:text-slate-300'
+                  }`}
+                >{m}×</button>
+              ))}
+            </div>
+            <p className="text-[9px] text-slate-600 mt-1">1× = live debut · 2× ≈ 0.9%/day @ ~1.8% maxDD · 3× aggressive. Deploy cap {Math.round(settings.deployCapPct * 100)}%.</p>
+          </div>
         </section>
 
         {/* ── Live Risk Status ── */}
