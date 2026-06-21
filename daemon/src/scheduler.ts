@@ -3,14 +3,14 @@ import { clearUniverseCache } from './engine/proTradeScannerApi';
 import { isUniverseFallback, clearUniverseCache as clearUniverseCacheClient } from './marketData';
 import { barStream } from './barStream';
 import { getState, setState, saveState, applyDayRoll } from './stateStore';
-import { monitorPaperTrades } from './engine/monitorTrades';
+import { monitorPaperTrades, closePaperTrade } from './engine/monitorTrades';
 import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
 import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings, initDailyBalance } from './riskManager';
 import { kiteEnv } from './kite/kiteEnv';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
-import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions, cancelPaperOrder } from './broker';
+import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions, cancelPaperOrder, getOrderMap } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
@@ -74,23 +74,58 @@ function msUntilRebuild(): number {
 let fullScanRunning = false;
 let hotScanRunning = false;
 let monitorRunning = false;
-let accountBalance = 100_000;   // capped at CAPITAL_CAP_INR — drives sizing
-let accountEquity = 100_000;    // real broker equity — drives the drawdown kill
+let accountBalance = 0;   // capped at CAPITAL_CAP_INR — drives sizing (real Kite equity; 0 until funded)
+let accountEquity = 0;    // real broker equity — drives the drawdown kill
 let lastOrderAt = 0;            // order-rate throttle
 
 async function syncAccount(): Promise<void> {
   try {
     const account = await getPaperAccount();
     const equity = parseFloat(account.equity);
-    if (Number.isFinite(equity) && equity > 0) {
+    if (Number.isFinite(equity)) {
+      // Always reflect the REAL Kite equity — even ₹0 (unfunded) — so the executor never sizes
+      // on a phantom default. HWM + day baseline only seed once we actually have capital.
       accountEquity = equity;
-      updateHwm(equity);
       accountBalance = Math.min(equity, kiteEnv.CAPITAL_CAP_INR); // hard ₹ capital cap
-      initDailyBalance(accountBalance); // seed day-start baseline (idempotent within a day)
+      if (equity > 0) {
+        updateHwm(equity);
+        initDailyBalance(accountBalance); // seed day-start baseline (idempotent within a day)
+      }
     }
   } catch (err) {
     console.warn('[scheduler] account sync failed:', (err as Error).message);
   }
+}
+
+/**
+ * Reconcile internal open trades against ACTUAL Kite fills. If a resting SL-M or TP-LIMIT has
+ * completed at the broker, close the internal trade at the real fill price (captures true slippage)
+ * rather than inferring the exit from scanned prices. Also catches fills that happened while the
+ * daemon was between cycles or restarting. The existing close path then records risk + OCO-cancels
+ * the sibling leg. Live (kite + auto-execute) only — a no-op in shadow / paper.
+ */
+async function reconcileBrokerFills(trades: PaperTrade[]): Promise<PaperTrade[]> {
+  const open = trades.filter((t) => t.status === 'Open' && (t.stopOrderId || t.tpOrderId));
+  if (!open.length) return trades;
+  const orderMap = await getOrderMap().catch((e: Error) => {
+    console.warn('[reconcile] getOrderMap failed:', e.message);
+    return null;
+  });
+  if (!orderMap) return trades;
+  return trades.map((t) => {
+    if (t.status !== 'Open') return t;
+    const tp = t.tpOrderId ? orderMap[t.tpOrderId] : undefined;
+    const sl = t.stopOrderId ? orderMap[t.stopOrderId] : undefined;
+    if (tp && tp.status === 'COMPLETE' && tp.avgPrice > 0) {
+      console.log(`[reconcile] ${t.symbol} TP-LIMIT filled @ ₹${tp.avgPrice} (broker)`);
+      return closePaperTrade(t, tp.avgPrice, 'Target');
+    }
+    if (sl && sl.status === 'COMPLETE' && sl.avgPrice > 0) {
+      console.log(`[reconcile] ${t.symbol} SL-M filled @ ₹${sl.avgPrice} (broker)`);
+      return closePaperTrade(t, sl.avgPrice, t.t1HitAt ? 'T1 Profit' : 'Stop');
+    }
+    return t;
+  });
 }
 
 async function monitorLoop(): Promise<void> {
@@ -104,8 +139,13 @@ async function monitorLoop(): Promise<void> {
     const openTrades = trades.filter((t: { status: string }) => t.status === 'Open');
     if (!openTrades.length) return;
 
-    const { trades: updated, changed } = monitorPaperTrades(trades, snapshot.rows);
-    if (!changed) return;
+    // (#2) Reconcile against real broker fills FIRST (live only), then run the price-based monitor
+    // (ratchet BE→T1→T2 + soft exits) on whatever is still open.
+    const reconciled = (env.BROKER === 'kite' && env.AUTO_EXECUTE) ? await reconcileBrokerFills(trades) : trades;
+    const reconClosed = reconciled.some((t, i) => t.status !== trades[i].status);
+
+    const { trades: updated, changed } = monitorPaperTrades(reconciled, snapshot.rows);
+    if (!changed && !reconClosed) return;
 
     // Record closed trades to risk state
     for (let i = 0; i < trades.length; i++) {
@@ -146,6 +186,9 @@ async function monitorLoop(): Promise<void> {
 
 function tryFireTrades(): void {
   if (!env.AUTO_EXECUTE) return;
+  // No real capital → no sizing. Guards against firing on a phantom balance when the account is
+  // unfunded or the margins sync hasn't landed yet (sizing would otherwise be meaningless/rejected).
+  if (accountBalance <= 0) return;
   const snapshot = getCurrentSnapshot();
   if (!snapshot) return;
 
@@ -268,7 +311,12 @@ function tryFireTrades(): void {
         if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId, tpOrderId: order.tpId }; saveTrades(ts); }
         console.log(`[broker] order placed ${newTrade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'} tp=${order.tpId ?? 'n/a'}`);
       }).catch((err: Error) => {
-        console.warn(`[broker] order failed ${newTrade.symbol}:`, err.message);
+        // Entry rejected at the broker (margin / circuit / ASM / connectivity) → roll back the
+        // optimistically-recorded trade so we don't manage or P&L a position that never existed.
+        console.warn(`[broker] entry order failed ${newTrade.symbol} — rolling back phantom trade:`, err.message);
+        const ts = loadTrades().filter((t) => t.id !== newTrade.id);
+        saveTrades(ts);
+        emit('trade_closed', newTrade); // tell UIs to drop it from the open list
       });
     }
 

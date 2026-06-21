@@ -164,6 +164,31 @@ export async function getPositions(): Promise<KitePosition[]> {
     }));
 }
 
+interface RawOrderStatus {
+  order_id: string;
+  status: string;            // 'COMPLETE' | 'REJECTED' | 'CANCELLED' | 'OPEN' | 'TRIGGER PENDING' | …
+  average_price: number;
+  filled_quantity: number;
+  transaction_type: string;
+  tradingsymbol: string;
+}
+
+export interface OrderState { status: string; avgPrice: number; filledQty: number }
+
+/**
+ * Today's orders keyed by order_id — the source of truth for whether a resting SL-M / TP-LIMIT
+ * actually filled at the broker (and at what price). Used by the daemon to reconcile its internal
+ * trades against real fills, instead of inferring exits from scanned prices.
+ */
+export async function getOrderMap(): Promise<Record<string, OrderState>> {
+  const orders = (await kc().getOrders()) as unknown as RawOrderStatus[];
+  const map: Record<string, OrderState> = {};
+  for (const o of orders ?? []) {
+    map[o.order_id] = { status: o.status, avgPrice: Number(o.average_price ?? 0), filledQty: Number(o.filled_quantity ?? 0) };
+  }
+  return map;
+}
+
 /** Square off one position with an opposite MARKET MIS order. */
 export async function closePosition(symbol: string): Promise<{ ok: boolean; error?: string }> {
   try {

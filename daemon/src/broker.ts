@@ -74,7 +74,13 @@ export async function getPaperPositions(): Promise<AlpacaPosition[]> {
 
 export async function getRecentFilledOrders(symbol: string): Promise<AlpacaFilledOrder[]> {
   if (!USE_KITE) return alpaca.getRecentFilledOrders(symbol);
-  return []; // TODO Phase 1b+: map kite.getOrders() COMPLETE legs
+  return []; // legacy shape unused on Kite; reconciliation uses getOrderMap() instead
+}
+
+/** Today's broker orders keyed by id (status + fill price) — for fill reconciliation. Kite only. */
+export async function getOrderMap(): Promise<Record<string, kite.OrderState>> {
+  if (!USE_KITE) return {};
+  return kite.getOrderMap();
 }
 
 // Float helpers are Alpaca-specific; NSE float is sourced later (Phase 3). Stub for Kite.
