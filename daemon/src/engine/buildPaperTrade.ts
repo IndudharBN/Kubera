@@ -113,6 +113,7 @@ export function buildPaperTrade(
     rr1: plan.rr1,
     quantity,
     notional: filledNotional,
+    cost: nseRoundTripCost(plan.entry, quantity),  // modelled NSE round-trip charges (₹) for this ticket
     openedAt,
     reason: (row.primaryStrategy?.reason || row.reason) + heatNote,
     signalGroup: row.primaryStrategy?.signalGroup,

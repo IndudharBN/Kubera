@@ -101,6 +101,7 @@ interface PaperTrade {
   rr1: number;
   quantity: number;
   notional: number;
+  cost?: number;
   openedAt: string;
   closedAt?: string;
   exitPrice?: number;
@@ -1487,7 +1488,7 @@ export function ProTradeScannerScreen() {
   const [monitorDate, setMonitorDate] = React.useState<string>(() => todayET());
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settings, setSettings] = React.useState<ProTradeSettings>(() => loadProTradeSettings());
-  const [accountBalance, setAccountBalance] = React.useState(100_000);
+  const [accountBalance, setAccountBalance] = React.useState(0); // real Kite equity from the daemon (no hardcoded capital)
   const [watchlist, setWatchlist] = React.useState<DayWatchlist>(() => loadWatchlist());
   const [watchlistOnly, setWatchlistOnly] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<'premarket' | 'workflow'>(() => isPremarketWindow() ? 'premarket' : 'workflow');
@@ -1524,9 +1525,9 @@ export function ProTradeScannerScreen() {
         setLoading(false);
       });
 
-    // Account balance
+    // Account balance — the real Kite equity (₹0 until funded; never a hardcoded default)
     daemonClient.getAccount()
-      .then((a) => { if (a.equity > 0) setAccountBalance(a.equity); })
+      .then((a) => setAccountBalance(a.equity))
       .catch(() => {/* best-effort */});
 
     // Risk data
@@ -1536,7 +1537,7 @@ export function ProTradeScannerScreen() {
 
     // Account + risk poll every 15s
     const acctId = window.setInterval(() => {
-      daemonClient.getAccount().then((a) => { if (a.equity > 0) setAccountBalance(a.equity); }).catch(() => {});
+      daemonClient.getAccount().then((a) => setAccountBalance(a.equity)).catch(() => {});
       daemonClient.getRisk().then(setRiskData).catch(() => {});
       // Snapshot polling backstop: only fire when the WS is down. A WebSocket is
       // best-effort push, not a sync guarantee — if the socket drops (laptop sleep,
@@ -1857,11 +1858,12 @@ export function ProTradeScannerScreen() {
           return sum + paperPnl(t, px).pnl;
         }, 0);
         const closedPnl = todayClosed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-        const hudPnl = closedPnl + openPnl;
+        const chargesToday = todayClosed.reduce((sum, t) => sum + (t.cost ?? 0), 0);  // realized NSE round-trip charges today
+        const hudPnl = (closedPnl - chargesToday) + openPnl;  // NET of charges on the closed portion
         const totalClosed = todayWins + todayLosses;
         const wr = totalClosed > 0 ? Math.round((todayWins / totalClosed) * 100) : 0;
         const usedRisk = Math.max(0, -(riskData?.dailyRealizedPnl ?? 0));
-        const dailyLossLimit = riskData ? riskData.dailyStartBalance * riskData.riskSettings.dailyLossLimitPct : accountBalance * 0.08;
+        const dailyLossLimit = riskData ? riskData.dailyStartBalance * riskData.riskSettings.dailyLossLimitPct : accountBalance * 0.03;
         const riskPct = dailyLossLimit > 0 ? Math.min(100, (usedRisk / dailyLossLimit) * 100) : 0;
         const pausedStrats: { name: string; minsLeft: number }[] = [];
         const groupCbList = riskData?.groupCbSummary ?? [];
@@ -1872,7 +1874,9 @@ export function ProTradeScannerScreen() {
         const tradeReadyCount = rows.filter((r) => r.workflowStage === 'trade_ready').length;
         const formingCount = rows.filter((r) => r.workflowStage === 'forming').length;
         const openNotional = openTrades.reduce((s, t) => s + (t.t1HitAt ? t.notional * 0.5 : t.notional), 0);
-        const deployedPct = accountBalance > 0 ? Math.min(100, (openNotional / (accountBalance * 0.65)) * 100) : 0;
+        const deployCapPct = riskData?.riskSettings?.deployCapPct ?? 0.70;  // real cap from daemon settings (no hardcode)
+        const deployCapAmt = accountBalance * deployCapPct;
+        const deployedPct = deployCapAmt > 0 ? Math.min(100, (openNotional / deployCapAmt) * 100) : 0;
         const vixLevel = snapshot?.regime?.vixLevel;
         return (
           <div className="shrink-0 rounded-xl border border-white/5 bg-white/[0.025] px-4 py-3 space-y-3">
@@ -1896,6 +1900,13 @@ export function ProTradeScannerScreen() {
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Equity</p>
                 <p className="text-sm font-mono font-bold text-white leading-none">₹{accountBalance.toLocaleString('en-IN')}</p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Charges Today</p>
+                <p className="text-sm font-mono font-bold text-amber-400 leading-none" title="Realized NSE round-trip charges on today's closed trades (STT/brokerage/exch/GST/SEBI/stamp)">
+                  ₹{chargesToday.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  {closedPnl > 0 && <span className="text-slate-600 text-[10px]"> · {((chargesToday / closedPnl) * 100).toFixed(0)}% of gross</span>}
+                </p>
               </div>
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">NIFTY Tide</p>
@@ -1954,7 +1965,7 @@ export function ProTradeScannerScreen() {
                 <div className="flex justify-between text-[9px] uppercase tracking-widest font-black mb-1">
                   <span className="text-slate-500">Capital Deployed</span>
                   <span className={deployedPct > 80 ? 'text-amber-400' : 'text-slate-400'}>
-                    ₹{openNotional.toFixed(0)} / ₹{(accountBalance * 0.65).toFixed(0)}
+                    ₹{openNotional.toFixed(0)} / ₹{deployCapAmt.toFixed(0)}
                   </span>
                 </div>
                 <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">

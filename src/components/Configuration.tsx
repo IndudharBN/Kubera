@@ -24,6 +24,7 @@ interface PaperTradeRecord {
   closedAt?: string;
   exitPrice?: number;
   pnl?: number;
+  cost?: number;
 }
 
 interface DayStats {
@@ -163,7 +164,14 @@ function usePaperStats() {
     }
   }
 
-  return { todayPnl, totalPnl, winRate, wins, losses, closed, open, todayClosed, byStrategy, recentTrades, totalTrades: closed.length, dayStatsMap, equityPoints, maxDrawdown, bestDay, worstDay, streak, streakType, profitFactor, avgRR, avgHoldMinutes, hourlyPnl };
+  // ── NSE round-trip charges ────────────────────────────────────────────────────
+  const totalCost = closed.reduce((s, t) => s + (t.cost ?? 0), 0);
+  const todayCost = todayClosed.reduce((s, t) => s + (t.cost ?? 0), 0);
+  const netPnl = totalPnl - totalCost;
+  const todayNetPnl = todayPnl - todayCost;
+  const costRatio = grossWin > 0 ? (totalCost / grossWin) * 100 : 0; // charges as % of gross profit
+
+  return { todayPnl, totalPnl, winRate, wins, losses, closed, open, todayClosed, byStrategy, recentTrades, totalTrades: closed.length, dayStatsMap, equityPoints, maxDrawdown, bestDay, worstDay, streak, streakType, profitFactor, avgRR, avgHoldMinutes, hourlyPnl, totalCost, todayCost, netPnl, todayNetPnl, costRatio };
 }
 
 function pnlColor(v: number) { return v >= 0 ? 'text-emerald-400' : 'text-rose-400'; }
@@ -463,13 +471,15 @@ export function PerformanceScreen() {
   const stats = usePaperStats();
 
   const summaryCards = [
-    { label: "Today's P&L", value: fmtPnl(stats.todayPnl), sub: `${stats.todayClosed.length} trades today`, color: pnlColor(stats.todayPnl) },
-    { label: 'Total Paper P&L', value: fmtPnl(stats.totalPnl), sub: `${stats.totalTrades} closed trades`, color: pnlColor(stats.totalPnl) },
+    { label: "Today's Net P&L", value: fmtPnl(stats.todayNetPnl), sub: `${stats.todayClosed.length} trades · ${fmtPnl(stats.todayPnl)} gross − ₹${stats.todayCost.toFixed(0)} cost`, color: pnlColor(stats.todayNetPnl) },
+    { label: 'Total Net P&L', value: fmtPnl(stats.netPnl), sub: `${stats.totalTrades} trades · after ₹${stats.totalCost.toFixed(0)} charges`, color: pnlColor(stats.netPnl) },
     { label: 'Win Rate', value: `${stats.winRate}%`, sub: `${stats.wins}W / ${stats.losses}L`, color: 'text-indigo-400' },
-    { label: 'Open Positions', value: String(stats.open.length), sub: 'Paper trades active', color: 'text-amber-400' },
+    { label: 'Open Positions', value: String(stats.open.length), sub: 'Trades active', color: 'text-amber-400' },
     { label: 'Profit Factor', value: stats.profitFactor >= 99 ? '∞' : stats.profitFactor.toFixed(2), sub: 'Gross win / gross loss', color: stats.profitFactor >= 1.5 ? 'text-emerald-400' : stats.profitFactor >= 1 ? 'text-amber-400' : 'text-rose-400' },
     { label: 'Avg R:R', value: stats.avgRR > 0 ? `${stats.avgRR.toFixed(2)}R` : '--', sub: 'Target / stop distance', color: 'text-cyan-400' },
     { label: 'Avg Hold', value: stats.avgHoldMinutes > 0 ? stats.avgHoldMinutes >= 60 ? `${(stats.avgHoldMinutes / 60).toFixed(1)}h` : `${stats.avgHoldMinutes}m` : '--', sub: 'Per closed trade', color: 'text-slate-300' },
+    { label: 'Charges Paid', value: `₹${stats.totalCost.toFixed(0)}`, sub: 'NSE round-trip (all closed)', color: 'text-amber-400' },
+    { label: 'Cost Ratio', value: `${stats.costRatio.toFixed(0)}%`, sub: 'charges / gross profit', color: stats.costRatio > 30 ? 'text-rose-400' : 'text-slate-300' },
   ];
 
   return (

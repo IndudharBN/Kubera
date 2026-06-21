@@ -39,6 +39,8 @@ export interface PaperTrade {
   rr1: number;
   quantity: number;
   notional: number;
+  cost?: number;          // modelled NSE round-trip charges (₹) — STT/brokerage/exch/GST/SEBI/stamp
+
   openedAt: string;
   closedAt?: string;
   exitPrice?: number;

@@ -112,11 +112,14 @@ async function monitorLoop(): Promise<void> {
       const before = trades[i];
       const after = updated[i];
       if (before.status === 'Open' && after.status === 'Closed' && after.pnl !== undefined) {
-        recordGroupTradeResult((after.signalGroup ?? 'UNCLASSIFIED') as import('./types').SignalGroup, after.pnl);
-        recordTradeResult(after.strategyId ?? 'unknown', after.pnl, accountBalance);
+        // Record NET of NSE round-trip charges so daily P&L, the loss kill, and circuit
+        // breakers reflect what actually hits the account (gross stays on the trade for display).
+        const netPnl = after.pnl - (after.cost ?? 0);
+        recordGroupTradeResult((after.signalGroup ?? 'UNCLASSIFIED') as import('./types').SignalGroup, netPnl);
+        recordTradeResult(after.strategyId ?? 'unknown', netPnl, accountBalance);
         emit('trade_closed', after);
         emit('risk_update', { dailyPnl: getState().riskState.dailyRealizedPnl });
-        console.log(`[monitor] ${after.symbol} closed — ${after.outcome} pnl=$${after.pnl?.toFixed(2)}`);
+        console.log(`[monitor] ${after.symbol} closed — ${after.outcome} gross=₹${after.pnl?.toFixed(2)} cost=₹${(after.cost ?? 0).toFixed(2)} net=₹${netPnl.toFixed(2)}`);
         // OCO (sequenced to remove the cancel/close race): await the SL-M cancel FIRST,
         // then square off. closePaperPosition is position-aware (reads live qty), so even
         // if the SL-M already filled, the close is a no-op — no double-fill, no orphan.

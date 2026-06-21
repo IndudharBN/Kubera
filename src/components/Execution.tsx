@@ -17,6 +17,7 @@ interface PaperTrade {
   quantity: number;
   openedAt: string;
   pnl?: number;
+  cost?: number;
 }
 
 function fmtMoney(v: number | string | null | undefined) {
@@ -236,15 +237,17 @@ function KiteOrdersScreen() {
               <th className="py-2 px-3 text-right">Qty</th>
               <th className="py-2 px-3">Status</th>
               <th className="py-2 px-3">Outcome</th>
-              <th className="py-2 px-3 text-right">P&L</th>
+              <th className="py-2 px-3 text-right">Gross P&L</th>
+              <th className="py-2 px-3 text-right">Cost</th>
+              <th className="py-2 px-3 text-right">Net P&L</th>
             </tr>
           </thead>
           <tbody className="font-mono text-[11px]">
             {loadingTrades && (
-              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">Loading trades…</td></tr>
+              <tr><td colSpan={13} className="py-8 text-center text-slate-500 font-sans text-xs">Loading trades…</td></tr>
             )}
             {!loadingTrades && displayed.length === 0 && (
-              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">No trades for {date}.</td></tr>
+              <tr><td colSpan={13} className="py-8 text-center text-slate-500 font-sans text-xs">No trades for {date}.</td></tr>
             )}
             {displayed.map((t) => {
               const pnl = t.pnl ?? 0;
@@ -268,6 +271,10 @@ function KiteOrdersScreen() {
                   <td className="py-2 px-3 text-slate-400">{t.outcome}</td>
                   <td className={`py-2 px-3 text-right font-bold ${t.status === 'Closed' ? pnlColor(pnl) : 'text-slate-500'}`}>
                     {t.status === 'Closed' ? `${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)}` : '--'}
+                  </td>
+                  <td className="py-2 px-3 text-right text-amber-400/80">{t.cost != null ? `−${fmtMoney(t.cost)}` : '--'}</td>
+                  <td className={`py-2 px-3 text-right font-black ${t.status === 'Closed' ? pnlColor(pnl - (t.cost ?? 0)) : 'text-slate-500'}`}>
+                    {t.status === 'Closed' ? `${(pnl - (t.cost ?? 0)) >= 0 ? '+' : ''}${fmtMoney(pnl - (t.cost ?? 0))}` : '--'}
                   </td>
                 </tr>
               );

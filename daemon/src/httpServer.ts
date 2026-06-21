@@ -59,7 +59,7 @@ function riskSnapshot(accountBalance: number) {
     lossLimitReason: daily.reason,
     groupCbSummary: getGroupCbSummary(),
     strategyCb: state.riskState.strategyCb,
-    riskSettings: state.riskSettings,
+    riskSettings: getRiskSettings(),  // merged with defaults → full set (deployCapPct, sizeMultiplier, …)
   };
 }
 

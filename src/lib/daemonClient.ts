@@ -57,6 +57,8 @@ export interface DaemonRisk {
     maxPositions: number;
     cbLossThreshold: number;
     disabledStrategies: string[];
+    deployCapPct?: number;
+    sizeMultiplier?: number;
   };
 }
 
