@@ -19,12 +19,16 @@ export interface RiskSettings {
   disabledStrategies: string[];  // strategy IDs to skip entirely
 }
 
+// Mirror the daemon's live book (daemon/src/types.ts DEFAULT_RISK_SETTINGS) so the UI's
+// Strategy Controls + Risk panels show the real NSE config: 7-strategy book, 6 positions, −3% kill.
 export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   riskPerTradePct: 0.03,
-  dailyLossLimitPct: 0.08,
-  maxPositions: 5,
+  dailyLossLimitPct: 0.03,
+  maxPositions: 6,
   cbLossThreshold: 3,
-  disabledStrategies: [],
+  // Disabled (data-driven cuts) — leaves the 7 winners: liquidity_sweep, vwap15m_pullback,
+  // orb_retest, orb15m_retest, sniper_1m, flag_break, ema20_bounce_15m.
+  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce'],
 };
 
 export function getRiskSettings(): RiskSettings {

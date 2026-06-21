@@ -47,11 +47,11 @@ interface EquityPoint {
 }
 
 function todayET(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 function toETDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
 function usePaperStats() {
@@ -110,7 +110,7 @@ function usePaperStats() {
   const hourlyPnl: Record<number, number> = {};
   for (const t of closed) {
     if (!t.closedAt) continue;
-    const h = parseInt(new Date(t.closedAt).toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }));
+    const h = parseInt(new Date(t.closedAt).toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }));
     hourlyPnl[h] = (hourlyPnl[h] ?? 0) + (t.pnl ?? 0);
   }
 
@@ -167,7 +167,7 @@ function usePaperStats() {
 }
 
 function pnlColor(v: number) { return v >= 0 ? 'text-emerald-400' : 'text-rose-400'; }
-function fmtPnl(v: number) { return `${v >= 0 ? '+' : ''}$${Math.abs(v).toFixed(2)}`; }
+function fmtPnl(v: number) { return `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toFixed(2)}`; }
 
 // ── Equity Curve ──────────────────────────────────────────────────────────────
 
@@ -233,7 +233,7 @@ function EquityCurve({ points }: { points: EquityPoint[] }) {
             <span className="text-slate-500">{hp.date}</span>
             <span className={pnlColor(hp.dailyPnl)}>Day {fmtPnl(hp.dailyPnl)}</span>
             <span className={pnlColor(hp.cumulativePnl)}>Total {fmtPnl(hp.cumulativePnl)}</span>
-            {hp.drawdown < -0.01 && <span className="text-rose-400">DD ${hp.drawdown.toFixed(2)}</span>}
+            {hp.drawdown < -0.01 && <span className="text-rose-400">DD ₹{hp.drawdown.toFixed(2)}</span>}
           </div>
         )}
       </div>
@@ -250,7 +250,7 @@ function EquityCurve({ points }: { points: EquityPoint[] }) {
         {/* Y labels */}
         {yTicks.map((v) => (
           <text key={v} x={PAD.l - 4} y={toY(v) + 4} textAnchor="end" fontSize={9} fill="rgba(148,163,184,0.55)">
-            {v >= 0 ? '+' : ''}${Math.abs(v)}
+            {v >= 0 ? '+' : '−'}₹{Math.abs(v)}
           </text>
         ))}
 
@@ -280,7 +280,7 @@ function KeyStats({ maxDrawdown, bestDay, worstDay, streak, streakType }: {
   const streakColor = streakType === 'green' ? 'text-emerald-400' : streakType === 'red' ? 'text-rose-400' : 'text-slate-500';
 
   const items = [
-    { label: 'Max Drawdown', value: maxDrawdown < -0.01 ? `-$${Math.abs(maxDrawdown).toFixed(2)}` : '$0.00', color: maxDrawdown < -0.01 ? 'text-rose-400' : 'text-slate-400', sub: 'peak-to-trough' },
+    { label: 'Max Drawdown', value: maxDrawdown < -0.01 ? `−₹${Math.abs(maxDrawdown).toFixed(2)}` : '₹0.00', color: maxDrawdown < -0.01 ? 'text-rose-400' : 'text-slate-400', sub: 'peak-to-trough' },
     { label: 'Best Day', value: bestDay ? fmtPnl(bestDay.pnl) : '--', color: bestDay ? pnlColor(bestDay.pnl) : 'text-slate-500', sub: bestDay?.date ?? '' },
     { label: 'Worst Day', value: worstDay ? fmtPnl(worstDay.pnl) : '--', color: worstDay ? pnlColor(worstDay.pnl) : 'text-slate-500', sub: worstDay?.date ?? '' },
     { label: 'Streak', value: streakVal, color: streakColor, sub: streakType === 'none' ? 'no data' : 'consecutive days' },
@@ -309,7 +309,7 @@ function HourHeatmap({ hourlyPnl }: { hourlyPnl: Record<number, number> }) {
   return (
     <div className="glass p-5 rounded-xl">
       <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2 mb-4">
-        <Clock size={14} className="text-amber-400" />Best Hour to Trade (ET)
+        <Clock size={14} className="text-amber-400" />Best Hour to Trade (IST)
       </h3>
       <div className="flex gap-2">
         {hours.map((h) => {
@@ -329,7 +329,7 @@ function HourHeatmap({ hourlyPnl }: { hourlyPnl: Record<number, number> }) {
           );
         })}
       </div>
-      <p className="text-[9px] text-slate-600 mt-2">Based on closed paper trade exit times in ET</p>
+      <p className="text-[9px] text-slate-600 mt-2">Based on closed trade exit times in IST</p>
     </div>
   );
 }
@@ -443,8 +443,8 @@ function PnlCalendar({ dayStatsMap }: { dayStatsMap: Map<string, DayStats> }) {
                   <td className="py-1.5 px-2 font-bold text-white">{t.symbol}</td>
                   <td className="py-1.5 px-2 text-indigo-400">{t.strategyCode || '--'}</td>
                   <td className="py-1.5 px-2"><span className={`text-[9px] font-black ${t.direction === 'BULL' ? 'text-emerald-400' : 'text-rose-400'}`}>{t.direction}</span></td>
-                  <td className="py-1.5 px-2 text-right text-slate-300">${t.entry.toFixed(2)}</td>
-                  <td className="py-1.5 px-2 text-right text-slate-300">{t.exitPrice ? `$${t.exitPrice.toFixed(2)}` : '--'}</td>
+                  <td className="py-1.5 px-2 text-right text-slate-300">₹{t.entry.toFixed(2)}</td>
+                  <td className="py-1.5 px-2 text-right text-slate-300">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : '--'}</td>
                   <td className="py-1.5 px-2 text-slate-400">{t.outcome}</td>
                   <td className={`py-1.5 px-2 text-right font-black ${pnlColor(t.pnl ?? 0)}`}>{fmtPnl(t.pnl ?? 0)}</td>
                 </tr>
@@ -564,8 +564,8 @@ export function PerformanceScreen() {
                       <td className="py-2 px-3 font-bold text-white">{t.symbol}</td>
                       <td className="py-2 px-3 text-slate-400">{t.strategyCode || '--'}</td>
                       <td className="py-2 px-3"><span className={`text-[9px] font-black ${t.direction === 'BULL' ? 'text-emerald-400' : 'text-rose-400'}`}>{t.direction}</span></td>
-                      <td className="py-2 px-3 text-right text-slate-300">${t.entry.toFixed(2)}</td>
-                      <td className="py-2 px-3 text-right text-slate-300">{t.exitPrice ? `$${t.exitPrice.toFixed(2)}` : '--'}</td>
+                      <td className="py-2 px-3 text-right text-slate-300">₹{t.entry.toFixed(2)}</td>
+                      <td className="py-2 px-3 text-right text-slate-300">{t.exitPrice ? `₹${t.exitPrice.toFixed(2)}` : '--'}</td>
                       <td className="py-2 px-3 text-slate-400">{t.outcome}</td>
                       <td className={`py-2 px-3 text-right font-black ${pnlColor(t.pnl ?? 0)}`}>{fmtPnl(t.pnl ?? 0)}</td>
                     </tr>
@@ -583,12 +583,12 @@ export function PerformanceScreen() {
             </h3>
             <div className="space-y-2 text-[11px] text-slate-400">
               {[
-                'Trade window: 9:30 AM – 3:50 PM ET (entry cutoff 3:50)',
-                'EOD flat: all positions closed at 3:57 PM ET',
-                'Min R:R ≥ 1.5 for Trade Ready',
-                'RVOL ≥ 1.2× hard gate — S3 only',
-                'Max 5 concurrent positions',
-                'Circuit breaker: 3 consecutive losses → 2h strategy pause',
+                'Trade window: 09:15 – 15:15 IST (entry cutoff 15:00)',
+                'EOD flat: all MIS positions squared off ~15:20 IST',
+                'Min R:R ≥ 1.5 for Trade Ready (net of NSE round-trip costs)',
+                'Max 6 concurrent positions — cores 3 / satellites 2',
+                'Per-direction cap: ≤ 3 long or short at once',
+                'Circuit breaker: 3 consecutive losses → 1h pause (per strategy + group)',
               ].map((r) => (
                 <div key={r} className="flex items-start gap-2"><CheckCircle2 size={11} className="text-emerald-500 mt-0.5 shrink-0" /><span>{r}</span></div>
               ))}
@@ -600,13 +600,13 @@ export function PerformanceScreen() {
             </h3>
             <div className="space-y-2 text-[11px] text-slate-400">
               {[
-                'S3: 15m trend must align — hard fail if counter-trend',
-                'S3: RVOL ≥ 1.2× — no institutional interest, no trade',
-                'S6: MSS confirmed on closed bar — no live-tick entries',
-                'S4: sweep wick + reclaim within 100-min window',
-                '1m EMA must confirm timing before auto-execute fires',
-                'Stop anchored to structural swing — min 0.75×ATR noise floor',
-                'T1 = 2R → scale 50%, stop to entry; T2 = structural level',
+                '7-strategy NSE book: liquidity_sweep + vwap15m lead; ORB/sniper/flag on movers',
+                'Reversal/pullback work on all names; momentum/breakout only on high-beta movers',
+                'Ratchet ladder: T1 (1.5R) → breakeven; 2R → lock stop at T1; exit T2 (2.5R)',
+                'Broker bracket: entry MARKET + resting SL-M + resting TP-LIMIT (2-leg OCO)',
+                'Stop anchored to structure — VIX-scaled noise floor (0.5×ATR 5m / 1.0×ATR 15m)',
+                'Sizing 1× for live debut → 2× once fills match backtest; ≤ 70% capital deployed',
+                'Daily kill: −3% realized halts new entries; −10% equity drawdown = full stop',
               ].map((r) => (
                 <div key={r} className="flex items-start gap-2"><AlertTriangle size={11} className="text-amber-500 mt-0.5 shrink-0" /><span>{r}</span></div>
               ))}
@@ -654,8 +654,8 @@ export function SettingsScreen(_props: SettingsScreenProps) {
   const [alpacaLoading, setAlpacaLoading] = React.useState(true);
 
   React.useEffect(() => {
-    getPaperAccount()
-      .then((a) => setAlpacaEquity(a.equity))
+    daemonClient.getAccount()
+      .then((a) => setAlpacaEquity(String(a.equity)))
       .catch(() => setAlpacaEquity(null))
       .finally(() => setAlpacaLoading(false));
   }, []);
@@ -681,27 +681,27 @@ export function SettingsScreen(_props: SettingsScreenProps) {
       {/* ── Alpaca Connection ── */}
       <section className="glass p-5 rounded-xl">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2 mb-4">
-          <Wallet size={14} className="text-indigo-400" />Broker — Alpaca Paper
+          <Wallet size={14} className="text-indigo-400" />Broker — Zerodha Kite
         </h3>
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">API Keys</p>
-            <p className={`text-sm font-black mt-1 ${keysOk ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {keysOk ? 'Configured' : 'Missing'}
+            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Kite Session</p>
+            <p className={`text-sm font-black mt-1 ${alpacaEquity != null ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {alpacaLoading ? '…' : alpacaEquity != null ? 'Active' : 'Offline'}
             </p>
-            <p className="text-[9px] text-slate-600 mt-0.5">{keysOk ? `${env.alpacaKey.slice(0, 6)}…` : 'Set VITE_ALPACA_KEY + VITE_ALPACA_SECRET in .env'}</p>
+            <p className="text-[9px] text-slate-600 mt-0.5">TOTP auto-login via daemon (.env.daemon)</p>
           </div>
           <div className="bg-white/5 border border-white/10 rounded-lg p-3">
-            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Paper Equity</p>
+            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Account Equity</p>
             <p className="text-sm font-black mt-1 text-white">
-              {alpacaLoading ? '…' : alpacaEquity ? `$${parseFloat(alpacaEquity).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : 'Offline'}
+              {alpacaLoading ? '…' : alpacaEquity ? `₹${parseFloat(alpacaEquity).toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : 'Offline'}
             </p>
-            <p className="text-[9px] text-slate-600 mt-0.5">Alpaca paper account</p>
+            <p className="text-[9px] text-slate-600 mt-0.5">Zerodha Kite · live margins</p>
           </div>
           <div className="bg-white/5 border border-white/10 rounded-lg p-3">
             <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Feed</p>
-            <p className="text-sm font-black mt-1 text-cyan-400">IEX Live</p>
-            <p className="text-[9px] text-slate-600 mt-0.5">data.alpaca.markets · free tier</p>
+            <p className="text-sm font-black mt-1 text-cyan-400">Kite NSE</p>
+            <p className="text-[9px] text-slate-600 mt-0.5">Zerodha Kite Connect · live</p>
           </div>
         </div>
       </section>
@@ -728,12 +728,12 @@ export function SettingsScreen(_props: SettingsScreenProps) {
             <div className="flex justify-between items-center py-2 border-b border-white/5">
               <span className="text-[11px] text-slate-400">Daily P&L</span>
               <span className={`text-sm font-black ${riskSummary.dailyPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {riskSummary.dailyPnl >= 0 ? '+' : ''}${riskSummary.dailyPnl.toFixed(2)}
+                {riskSummary.dailyPnl >= 0 ? '+₹' : '−₹'}{Math.abs(riskSummary.dailyPnl).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between items-center py-2 border-b border-white/5">
               <span className="text-[11px] text-slate-400">Daily Loss Limit</span>
-              <span className="text-sm font-black text-slate-300">${riskSummary.dailyLossLimit.toFixed(0)}</span>
+              <span className="text-sm font-black text-slate-300">₹{riskSummary.dailyLossLimit.toFixed(0)}</span>
             </div>
             <div className="flex justify-between items-center py-2 border-b border-white/5">
               <span className="text-[11px] text-slate-400">Limit Used</span>
@@ -798,17 +798,17 @@ export function SettingsScreen(_props: SettingsScreenProps) {
         </h3>
         <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-400">
           {[
-            'Trade window: 9:30 AM – 3:50 PM ET',
-            'EOD flat: 3:57 PM ET',
-            'Min R:R ≥ 1.5 for Trade Ready',
-            'RVOL ≥ 1.2× hard gate: S3',
-            'RVOL ≥ 1.0 soft: S1, S2, S4, S5, S6',
-            'VWAP + 5m EMA hard fail: S2, S3',
-            '15m trend hard fail: S3',
-            'S4: 100-min sweep window, 2.5×ATR proximity',
-            'S6: bar2Ok on closed bar (not live tick)',
-            'Price range: $1 – $1,500',
-            'Max 5 positions; CB: 3L → 2h pause',
+            'Trade window: 09:15 – 15:15 IST (entry cutoff 15:00)',
+            'EOD square-off: ~15:20 IST (MIS auto-close)',
+            'Min R:R ≥ 1.5 (net of NSE round-trip costs)',
+            'Universe: NSE F&O movers + NIFTY large-caps (dynamic)',
+            'Liquidity/ATR gates: turnover ≥ ₹25cr, ATR 1.5–12%',
+            'RVOL ≥ 0.8–1.2× by strategy (India-tuned)',
+            'VWAP + 5m EMA / 15m trend hard fails by strategy',
+            'Price range: ₹50 – ₹5,000',
+            'Ratchet: T1 1.5R→BE, 2R→lock T1, T2 2.5R',
+            'Max 6 positions; per-direction ≤ 3',
+            'CB: 3 consecutive losses → 1h pause',
           ].map((r) => (
             <div key={r} className="flex items-start gap-1.5">
               <CheckCircle2 size={10} className="text-emerald-500 mt-0.5 shrink-0" />

@@ -1,7 +1,5 @@
 import React from 'react';
 import { TrendingDown, TrendingUp, RefreshCcw } from 'lucide-react';
-import { getPaperAccount, getPaperPositions, type AlpacaPosition, type AlpacaAccount } from '../lib/alpacaBroker';
-import { todayET } from '../lib/tradeStore';
 import { daemonClient } from '../lib/daemonClient';
 import type { Order, Position } from '../types';
 
@@ -11,10 +9,11 @@ interface PaperTrade {
   strategyCode: string;
   direction: 'BULL' | 'BEAR' | 'NEUTRAL';
   status: 'Open' | 'Closed';
-  outcome: 'Open' | 'Target' | 'T1 Profit' | 'Stop' | 'Manual';
+  outcome: 'Open' | 'Target' | 'T1 Profit' | 'Stop' | 'Manual' | 'EOD';
   entry: number;
   stop: number;
   target: number;
+  target2?: number;
   quantity: number;
   openedAt: string;
   pnl?: number;
@@ -22,24 +21,31 @@ interface PaperTrade {
 
 function fmtMoney(v: number | string | null | undefined) {
   const n = typeof v === 'string' ? parseFloat(v) : (v ?? 0);
-  return isNaN(n) ? '--' : `$${n.toFixed(2)}`;
+  return isNaN(n) ? '--' : `₹${n.toFixed(2)}`;
 }
 function pnlColor(v: number) { return v >= 0 ? 'text-emerald-400' : 'text-rose-400'; }
 
-// ── Alpaca Paper Positions ────────────────────────────────────────────────────
-
+// NSE RTH in IST: 09:15–15:30.
 function isMarketHours() {
   const now = new Date();
-  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = et.getDay();
+  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const day = ist.getDay();
   if (day === 0 || day === 6) return false;
-  const mins = et.getHours() * 60 + et.getMinutes();
-  return mins >= 9 * 60 + 30 && mins < 16 * 60;
+  const mins = ist.getHours() * 60 + ist.getMinutes();
+  return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30;
 }
 
-function AlpacaPositionsScreen() {
-  const [account, setAccount] = React.useState<AlpacaAccount | null>(null);
-  const [positions, setPositions] = React.useState<AlpacaPosition[]>([]);
+function toISTTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── Kite Positions (from the daemon: open trades + live row prices + Kite margins) ──
+
+function KitePositionsScreen() {
+  const [equity, setEquity] = React.useState<number | null>(null);
+  const [buyingPower, setBuyingPower] = React.useState<number | null>(null);
+  const [open, setOpen] = React.useState<PaperTrade[]>([]);
+  const [priceBySymbol, setPriceBySymbol] = React.useState<Record<string, number>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
   const [refreshing, setRefreshing] = React.useState(false);
@@ -49,9 +55,17 @@ function AlpacaPositionsScreen() {
     try {
       if (manual) setRefreshing(true); else setLoading(true);
       setError('');
-      const [acct, pos] = await Promise.all([getPaperAccount(), getPaperPositions()]);
-      setAccount(acct);
-      setPositions(pos);
+      const [acct, openTrades, state] = await Promise.all([
+        daemonClient.getAccount().catch(() => null),
+        daemonClient.getOpenTrades(),
+        daemonClient.getState().catch(() => ({} as Record<string, unknown>)),
+      ]);
+      if (acct) { setEquity(acct.equity); setBuyingPower(acct.buyingPower); }
+      setOpen(openTrades as PaperTrade[]);
+      const rows = (state?.rows as Array<{ symbol: string; price: number }>) ?? [];
+      const map: Record<string, number> = {};
+      for (const r of rows) map[r.symbol.toUpperCase()] = r.price;
+      setPriceBySymbol(map);
       setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -63,39 +77,44 @@ function AlpacaPositionsScreen() {
 
   React.useEffect(() => {
     void load();
-    const id = setInterval(() => { if (isMarketHours()) void load(); }, 30_000);
+    const id = setInterval(() => { if (isMarketHours()) void load(); }, 15_000);
     return () => clearInterval(id);
   }, []);
 
-  const totalUpl = positions.reduce((s, p) => s + parseFloat(p.unrealized_pl || '0'), 0);
+  const enriched = open.map((t) => {
+    const current = priceBySymbol[t.symbol.toUpperCase()] ?? t.entry;
+    const dir = t.direction === 'BEAR' ? -1 : 1;
+    const upl = (current - t.entry) * t.quantity * dir;
+    const uplPct = t.entry > 0 ? ((current - t.entry) / t.entry) * 100 * dir : 0;
+    return { ...t, current, upl, uplPct };
+  });
+  const totalUpl = enriched.reduce((s, p) => s + p.upl, 0);
 
   return (
     <div className="flex flex-col gap-4 flex-1">
-      {account && (
-        <div className="grid grid-cols-4 gap-3">
-          {[
-            { label: 'Equity', value: fmtMoney(account.equity) },
-            { label: 'Cash', value: fmtMoney(account.cash) },
-            { label: 'Buying Power', value: fmtMoney(account.buying_power) },
-            { label: 'Unrealized P&L', value: fmtMoney(totalUpl), color: pnlColor(totalUpl) },
-          ].map((c) => (
-            <div key={c.label} className="glass p-3 rounded-xl">
-              <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">{c.label}</p>
-              <p className={`text-lg font-black ${c.color || 'text-white'}`}>{c.value}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Equity', value: equity != null ? fmtMoney(equity) : '--' },
+          { label: 'Buying Power', value: buyingPower != null ? fmtMoney(buyingPower) : '--' },
+          { label: 'Open Positions', value: String(open.length) },
+          { label: 'Unrealized P&L', value: fmtMoney(totalUpl), color: pnlColor(totalUpl) },
+        ].map((c) => (
+          <div key={c.label} className="glass p-3 rounded-xl">
+            <p className="text-[9px] text-slate-500 uppercase font-bold tracking-widest">{c.label}</p>
+            <p className={`text-lg font-black ${c.color || 'text-white'}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
 
       <div className="glass rounded-xl overflow-hidden flex flex-col flex-1">
         <div className="p-3 border-b border-white/5 flex justify-between items-center bg-white/5">
           <div className="flex items-center gap-3">
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Kite Positions ({positions.length})
+              Kite Positions ({open.length})
             </h2>
             {lastUpdated && (
               <span className="text-[10px] text-slate-500 font-mono">
-                updated {lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                updated {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' })} IST
               </span>
             )}
           </div>
@@ -108,7 +127,7 @@ function AlpacaPositionsScreen() {
           </button>
         </div>
 
-        {loading && <div className="flex-1 flex items-center justify-center text-slate-500 text-xs py-12">Loading Alpaca positions...</div>}
+        {loading && <div className="flex-1 flex items-center justify-center text-slate-500 text-xs py-12">Loading Kite positions…</div>}
         {error && <div className="flex-1 flex items-center justify-center text-rose-400 text-xs p-4">{error}</div>}
         {!loading && !error && (
           <div className="overflow-auto flex-1">
@@ -120,36 +139,34 @@ function AlpacaPositionsScreen() {
                   <th className="py-2 px-3 text-right">Qty</th>
                   <th className="py-2 px-3 text-right">Avg Entry</th>
                   <th className="py-2 px-3 text-right">Current</th>
-                  <th className="py-2 px-3 text-right">Market Value</th>
+                  <th className="py-2 px-3 text-right">Stop</th>
+                  <th className="py-2 px-3 text-right">Target</th>
                   <th className="py-2 px-3 text-right">Unrealized P&L</th>
                   <th className="py-2 px-3 text-right">P&L %</th>
                 </tr>
               </thead>
               <tbody className="font-mono text-[11px]">
-                {positions.length === 0 && (
-                  <tr><td colSpan={8} className="py-8 text-center text-slate-500 font-sans text-xs">No open Alpaca paper positions.</td></tr>
+                {enriched.length === 0 && (
+                  <tr><td colSpan={9} className="py-8 text-center text-slate-500 font-sans text-xs">No open Kite positions.</td></tr>
                 )}
-                {positions.map((pos) => {
-                  const upl = parseFloat(pos.unrealized_pl || '0');
-                  const uplPct = parseFloat(pos.unrealized_plpc || '0') * 100;
-                  return (
-                    <tr key={pos.symbol} className="hover:bg-white/5 transition-colors border-b border-white/5">
-                      <td className="py-2 px-3 font-bold text-white">{pos.symbol}</td>
-                      <td className="py-2 px-3"><span className={`font-bold ${pos.side === 'long' ? 'text-emerald-400' : 'text-rose-400'}`}>{pos.side.toUpperCase()}</span></td>
-                      <td className="py-2 px-3 text-right text-slate-300">{pos.qty}</td>
-                      <td className="py-2 px-3 text-right text-slate-300">{fmtMoney(pos.avg_entry_price)}</td>
-                      <td className="py-2 px-3 text-right text-white">{fmtMoney(pos.current_price)}</td>
-                      <td className="py-2 px-3 text-right text-slate-200">{fmtMoney(pos.market_value)}</td>
-                      <td className={`py-2 px-3 text-right font-bold ${pnlColor(upl)}`}>
-                        <div className="flex items-center justify-end gap-1">
-                          {upl >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                          {upl >= 0 ? '+' : ''}{fmtMoney(upl)}
-                        </div>
-                      </td>
-                      <td className={`py-2 px-3 text-right font-bold ${pnlColor(uplPct)}`}>{uplPct >= 0 ? '+' : ''}{uplPct.toFixed(2)}%</td>
-                    </tr>
-                  );
-                })}
+                {enriched.map((pos) => (
+                  <tr key={pos.id} className="hover:bg-white/5 transition-colors border-b border-white/5">
+                    <td className="py-2 px-3 font-bold text-white">{pos.symbol}</td>
+                    <td className="py-2 px-3"><span className={`font-bold ${pos.direction === 'BULL' ? 'text-emerald-400' : 'text-rose-400'}`}>{pos.direction === 'BULL' ? 'LONG' : 'SHORT'}</span></td>
+                    <td className="py-2 px-3 text-right text-slate-300">{pos.quantity}</td>
+                    <td className="py-2 px-3 text-right text-slate-300">{fmtMoney(pos.entry)}</td>
+                    <td className="py-2 px-3 text-right text-white">{fmtMoney(pos.current)}</td>
+                    <td className="py-2 px-3 text-right text-rose-400">{fmtMoney(pos.stop)}</td>
+                    <td className="py-2 px-3 text-right text-emerald-400">{fmtMoney(pos.target2 || pos.target)}</td>
+                    <td className={`py-2 px-3 text-right font-bold ${pnlColor(pos.upl)}`}>
+                      <div className="flex items-center justify-end gap-1">
+                        {pos.upl >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                        {pos.upl >= 0 ? '+' : ''}{fmtMoney(pos.upl)}
+                      </div>
+                    </td>
+                    <td className={`py-2 px-3 text-right font-bold ${pnlColor(pos.uplPct)}`}>{pos.uplPct >= 0 ? '+' : ''}{pos.uplPct.toFixed(2)}%</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -159,10 +176,14 @@ function AlpacaPositionsScreen() {
   );
 }
 
-// ── Paper Orders ──────────────────────────────────────────────────────────────
+// ── Orders (daemon trade log) ──────────────────────────────────────────────────
 
-function AlpacaOrdersScreen() {
-  const [date, setDate] = React.useState<string>(() => todayET());
+function todayIST(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function KiteOrdersScreen() {
+  const [date, setDate] = React.useState<string>(() => todayIST());
   const [trades, setTrades] = React.useState<PaperTrade[]>([]);
   const [loadingTrades, setLoadingTrades] = React.useState(true);
   const [filter, setFilter] = React.useState<'all' | 'open' | 'closed'>('all');
@@ -220,18 +241,16 @@ function AlpacaOrdersScreen() {
           </thead>
           <tbody className="font-mono text-[11px]">
             {loadingTrades && (
-              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">Loading trades...</td></tr>
+              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">Loading trades…</td></tr>
             )}
             {!loadingTrades && displayed.length === 0 && (
-              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">No paper trades for {date}.</td></tr>
+              <tr><td colSpan={11} className="py-8 text-center text-slate-500 font-sans text-xs">No trades for {date}.</td></tr>
             )}
             {displayed.map((t) => {
               const pnl = t.pnl ?? 0;
               return (
                 <tr key={t.id} className="hover:bg-white/5 transition-colors border-b border-white/5">
-                  <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
-                    {new Date(t.openedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </td>
+                  <td className="py-2 px-3 text-slate-400 whitespace-nowrap">{toISTTime(t.openedAt)}</td>
                   <td className="py-2 px-3 font-bold text-white">{t.symbol}</td>
                   <td className="py-2 px-3 text-indigo-400">{t.strategyCode || '--'}</td>
                   <td className="py-2 px-3">
@@ -263,12 +282,12 @@ function AlpacaOrdersScreen() {
 // ── Exports (keep old signatures so App.tsx doesn't need changes) ─────────────
 
 export function OrdersTable(_props: { orders: Order[] }) {
-  return <AlpacaOrdersScreen />;
+  return <KiteOrdersScreen />;
 }
 
 export function PositionsTable(_props: {
   positions: Position[]; orders?: Order[]; closingBusy?: boolean; closeMessage?: string;
   onClosePositions?: (positions: Position[]) => void;
 }) {
-  return <AlpacaPositionsScreen />;
+  return <KitePositionsScreen />;
 }
