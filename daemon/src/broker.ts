@@ -32,13 +32,13 @@ export async function getPaperAccount(): Promise<AlpacaAccount> {
   };
 }
 
-export async function placePaperBracketOrder(params: BracketParams): Promise<{ id: string; stopId?: string; tpId?: string }> {
+export async function placePaperBracketOrder(params: BracketParams): Promise<{ id: string; stopId?: string; tpId?: string; error?: string }> {
   if (!USE_KITE) return alpaca.placePaperBracketOrder(params);
   const r = await kite.placeBracketOrder(params);
   if (!r.ok) throw new Error(r.error ?? 'Kite order failed');
-  // Entry placed but SL-M failed → loud warning; monitorTrades must guard the unhedged fill.
+  // Entry placed but SL-M failed → loud warning; caller emergency-flattens the unhedged fill.
   if (r.error) console.warn(`[kite] ${params.symbol}: ${r.error}`);
-  return { id: r.entryOrderId ?? '', stopId: r.stopOrderId, tpId: r.tpOrderId };
+  return { id: r.entryOrderId ?? '', stopId: r.stopOrderId, tpId: r.tpOrderId, error: r.error };
 }
 
 export async function closePaperPosition(symbol: string): Promise<void> {

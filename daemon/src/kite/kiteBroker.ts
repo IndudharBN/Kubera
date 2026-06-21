@@ -71,24 +71,33 @@ export async function placeBracketOrder(params: {
       validity: 'DAY',
     })) as unknown as RawOrderResp;
 
+    // Protective SL-M — the most safety-critical leg. Retry up to 3× (transient API blips /
+    // rate-limits) before giving up; the caller emergency-flattens if it never lands.
     let stopOrderId: string | undefined;
-    try {
-      const stopResp = (await kc().placeOrder('regular', {
-        exchange: 'NSE',
-        tradingsymbol: symbol.toUpperCase(),
-        transaction_type: stopSide,
-        quantity: qty,
-        product: kiteEnv.PRODUCT,
-        order_type: 'SL-M',
-        trigger_price: roundToTick(stop, tick),
-        validity: 'DAY',
-      })) as unknown as RawOrderResp;
-      stopOrderId = stopResp.order_id;
-    } catch (stopErr) {
-      // Entry filled but stop failed — surface loudly; monitorTrades must guard.
+    let stopErr: Error | undefined;
+    for (let attempt = 1; attempt <= 3 && !stopOrderId; attempt++) {
+      try {
+        const stopResp = (await kc().placeOrder('regular', {
+          exchange: 'NSE',
+          tradingsymbol: symbol.toUpperCase(),
+          transaction_type: stopSide,
+          quantity: qty,
+          product: kiteEnv.PRODUCT,
+          order_type: 'SL-M',
+          trigger_price: roundToTick(stop, tick),
+          validity: 'DAY',
+        })) as unknown as RawOrderResp;
+        stopOrderId = stopResp.order_id;
+      } catch (e) {
+        stopErr = e as Error;
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+    if (!stopOrderId) {
+      // Entry filled but no protective stop after retries — surface loudly; caller must flatten.
       return {
         ok: true, entryOrderId: entryResp.order_id, qty,
-        error: `ENTRY PLACED but SL-M FAILED: ${(stopErr as Error).message}`,
+        error: `ENTRY PLACED but SL-M FAILED after 3 retries: ${stopErr?.message ?? 'unknown'}`,
       };
     }
 
@@ -134,8 +143,11 @@ interface RawUserMargin {
 }
 
 export async function getAccount(): Promise<KiteAccount> {
-  const m = await kc().getMargins('equity');
-  const eq = (m.equity ?? {}) as unknown as RawUserMargin;
+  // getMargins('equity') returns the equity segment DIRECTLY ({ net, available, … }). The old code
+  // read m.equity (only valid for the no-arg call that wraps both segments) → always undefined → ₹0
+  // even when funded. Handle both shapes: prefer the segment itself, fall back to a wrapped .equity.
+  const m = (await kc().getMargins('equity')) as unknown as RawUserMargin & { equity?: RawUserMargin };
+  const eq = (m.equity ?? m) as RawUserMargin;
   return {
     equity: Number(eq.net ?? eq.available?.live_balance ?? 0),
     cash:   Number(eq.available?.cash ?? eq.net ?? 0),

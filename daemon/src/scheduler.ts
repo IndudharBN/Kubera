@@ -305,11 +305,22 @@ function tryFireTrades(): void {
         stop: newTrade.stop,
         target: newTrade.target2 || newTrade.target,
         notional: newTrade.notional,
-      }).then((order) => {
+      }).then(async (order) => {
         const ts = loadTrades();
         const idx = ts.findIndex((t: { id: string }) => t.id === newTrade.id);
         if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId, tpOrderId: order.tpId }; saveTrades(ts); }
         console.log(`[broker] order placed ${newTrade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'} tp=${order.tpId ?? 'n/a'}`);
+        // #4 escalation: entry filled but NO protective SL-M landed (after retries) → never hold a
+        // naked position. Cancel any resting TP, emergency square-off the entry, mark it closed.
+        if (order.error && !order.stopId) {
+          console.error(`[broker] ${newTrade.symbol} UNHEDGED — SL-M failed; emergency-flattening the entry`);
+          emit('alert', { level: 'error', symbol: newTrade.symbol, message: 'SL-M failed — emergency flat' });
+          if (order.tpId) await cancelPaperOrder(order.tpId).catch(() => {});
+          await closePaperPosition(newTrade.symbol).catch((e: Error) => console.warn(`[broker] emergency close failed ${newTrade.symbol}:`, e.message));
+          const ts2 = loadTrades();
+          const j = ts2.findIndex((t: { id: string }) => t.id === newTrade.id);
+          if (j !== -1) { ts2[j] = closePaperTrade(ts2[j], newTrade.entry, 'Manual'); saveTrades(ts2); emit('trade_closed', ts2[j]); }
+        }
       }).catch((err: Error) => {
         // Entry rejected at the broker (margin / circuit / ASM / connectivity) → roll back the
         // optimistically-recorded trade so we don't manage or P&L a position that never existed.
