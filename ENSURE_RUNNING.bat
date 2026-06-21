@@ -33,7 +33,9 @@ if errorlevel 1 (
   echo [ENSURE] UI not on 5004 -- starting kubera-ui via pm2...
   pm2 restart kubera-ui
   if errorlevel 1 (
-    pm2 start npm --name kubera-ui -- run dev
+    rem pm2 cannot run npm.cmd on Windows (parses the .cmd as JS -> SyntaxError) -- launch vite's
+    rem JS entry directly so the UI process stays up and auto-starts every morning.
+    pm2 start node_modules\vite\bin\vite.js --name kubera-ui -- --port=5004 --host=0.0.0.0
   )
 ) else (
   echo [ENSURE] UI already running on 5004 -- leaving it alone.

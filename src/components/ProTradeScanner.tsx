@@ -148,7 +148,7 @@ function fmtMoney(value?: number | null) {
 }
 
 function toETTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 }
 
 function fmtPct(value: number) {
@@ -387,8 +387,8 @@ function availablePaperNotional(_settings: ProTradeSettings, trades: PaperTrade[
 
 function etMinutesNow(): number {
   const now = new Date();
-  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  const h = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
   return h * 60 + m;
 }
 
@@ -470,7 +470,7 @@ function StrategyCard({
       <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">
         {strategy === 'orb_retest' && 'Opening range breakout, retest, RVOL, VWAP.'}
         {strategy === 'vwap_pullback' && 'VWAP/EMA pullback and reclaim.'}
-        {strategy === 'rs_continuation' && 'Leadership while SPY/QQQ pauses.'}
+        {strategy === 'rs_continuation' && 'Leadership while NIFTY pauses.'}
         {strategy === 'liquidity_sweep' && 'Sweep and reclaim, manual review.'}
         {strategy === 'ob_fvg_retest' && 'OB/FVG confluence, manual review.'}
         {strategy === 'mss_breakout' && 'Market structure shift, structural break.'}
@@ -492,7 +492,7 @@ function DetailPanel({ row }: { row: ProTradeRow }) {
               ['ATR20', fmtMoney(row.atr20)],
               ['ADR%', row.atrPct ? `${row.atrPct.toFixed(2)}%` : '--'],
               ['$ Vol', row.dollarVolM ? `$${row.dollarVolM.toFixed(1)}M` : '--'],
-              ['RS vs SPY', row.rsVsBenchmark ? row.rsVsBenchmark.toFixed(3) : '--'],
+              ['RS vs NIFTY', row.rsVsBenchmark ? row.rsVsBenchmark.toFixed(3) : '--'],
               ['Prev D Hi', row.prevDayHigh > 0 ? fmtMoney(row.prevDayHigh) : '--'],
               ['Prev D Lo', row.prevDayLow > 0 ? fmtMoney(row.prevDayLow) : '--'],
               ['PM High', row.premarketHigh > 0 ? fmtMoney(row.premarketHigh) : '--'],
@@ -742,9 +742,9 @@ function WorkflowTable({
                         <td className="py-3 px-3 border-r border-white/5 text-right text-slate-300">{orderedTrade ? orderedTrade.quantity.toFixed(4) : '--'}</td>
                         <td className="py-3 px-3 border-r border-white/5 text-right text-white">{orderedTrade ? fmtMoney(currentPrice) : '--'}</td>
                         <td className="py-3 px-3 border-r border-white/5 text-right text-slate-300">{orderedTrade ? fmtMoney(orderedTrade.notional) : '--'}</td>
-                        <td className="py-3 px-3 border-r border-white/5 text-slate-400">{orderedTrade ? toETTime(orderedTrade.openedAt) + ' ET' : '--'}</td>
+                        <td className="py-3 px-3 border-r border-white/5 text-slate-400">{orderedTrade ? toETTime(orderedTrade.openedAt) + ' IST' : '--'}</td>
                         <td className="py-3 px-3 border-r border-white/5 text-right text-slate-300">{orderedTrade?.exitPrice ? fmtMoney(orderedTrade.exitPrice) : '--'}</td>
-                        <td className="py-3 px-3 border-r border-white/5 text-slate-400">{orderedTrade?.closedAt ? toETTime(orderedTrade.closedAt) + ' ET' : '--'}</td>
+                        <td className="py-3 px-3 border-r border-white/5 text-slate-400">{orderedTrade?.closedAt ? toETTime(orderedTrade.closedAt) + ' IST' : '--'}</td>
                         <td className={`py-3 px-3 border-r border-white/5 text-right font-black ${(livePnl?.pnl || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
                           {livePnl ? `${livePnl.pnl >= 0 ? '+' : ''}$${livePnl.pnl.toFixed(2)}` : '--'}
                         </td>
@@ -1073,7 +1073,7 @@ function PaperTradeMonitor({
                 };
               return (
                 <tr key={trade.id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-3 px-3 border-r border-white/5 text-slate-400">{toETTime(trade.openedAt)} ET</td>
+                  <td className="py-3 px-3 border-r border-white/5 text-slate-400">{toETTime(trade.openedAt)} IST</td>
                   <td className="py-3 px-3 border-r border-white/5">
                     <div className="font-black text-white">{trade.symbol}</div>
                     <div className="text-[10px] text-slate-500 uppercase truncate max-w-[160px]">{trade.company}</div>
@@ -1141,7 +1141,7 @@ function PaperTradeMonitor({
                         <span className="text-[10px] uppercase tracking-widest font-black">Close</span>
                       </button>
                     ) : (
-                      <span className="text-slate-600">{trade.closedAt ? toETTime(trade.closedAt) + ' ET' : '--'}</span>
+                      <span className="text-slate-600">{trade.closedAt ? toETTime(trade.closedAt) + ' IST' : '--'}</span>
                     )}
                   </td>
                 </tr>
@@ -1310,8 +1310,8 @@ function pmSetups(row: ProTradeRow): StrategyId[] {
 }
 
 function isPremarketWindow(): boolean {
-  const h = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  const h = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
   const mins = h * 60 + m;
   return mins >= 7 * 60 + 30 && mins < 9 * 60 + 45;
 }
@@ -1340,7 +1340,7 @@ function PremarketGapPanel({
   );
   const top10 = gapRows.slice(0, 10).map((r) => r.symbol);
   const inWindow = isPremarketWindow();
-  const etStr = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
+  const etStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
 
   return (
     <div className="glass rounded-xl overflow-hidden flex-1">
@@ -1644,7 +1644,7 @@ export function ProTradeScannerScreen() {
   }, [rows]);
 
   function lockWatchlist(symbols: string[]) {
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const next: DayWatchlist = { date: today, symbols };
     setWatchlist(next);
     saveWatchlist(next);
@@ -1655,10 +1655,10 @@ export function ProTradeScannerScreen() {
   // P5: Auto-lock Day Watchlist at 8:30 AM ET on first scan of the day
   React.useEffect(() => {
     if (!rows.length) return;
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     if (watchlist.date === today) return;
-    const etH = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-    const etM = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+    const etH = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+    const etM = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
     if (etH < 8 || (etH === 8 && etM < 30)) return;
     const top10 = [...rows].sort((a, b) => b.confidence - a.confidence).slice(0, 10).map((r) => r.symbol);
     const nextDayQueue = loadNextDayQueue();
@@ -1673,10 +1673,10 @@ export function ProTradeScannerScreen() {
   // P9: EOD archive — record watchlist outcome after 4 PM ET
   React.useEffect(() => {
     if (!rows.length || !watchlist.symbols.length) return;
-    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     if (watchlist.date !== todayET) return;
-    const etH = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-    const etM = parseInt(new Date().toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+    const etH = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+    const etM = parseInt(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
     if (etH * 60 + etM < 16 * 60) return; // Before 4 PM ET
     const archive = loadArchive();
     if (archive.some((r) => r.date === todayET)) return; // Already archived
@@ -1840,8 +1840,8 @@ export function ProTradeScannerScreen() {
     <div className="flex-1 flex flex-col gap-5 min-h-0">
       {/* === Trading HUD — critical session metrics === */}
       {(() => {
-        const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-        const todayClosed = paperTrades.filter((t) => t.status === 'Closed' && new Date(t.openedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === todayET);
+        const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const todayClosed = paperTrades.filter((t) => t.status === 'Closed' && new Date(t.openedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayET);
         const todayWins = todayClosed.filter((t) =>
           t.outcome === 'Target' || t.outcome === 'T1 Profit' ||
           ((t.outcome === 'Manual' || t.outcome === 'EOD') && (t.pnl ?? 0) > 0)
@@ -1881,7 +1881,7 @@ export function ProTradeScannerScreen() {
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Today P&L</p>
                 <p className={`text-xl font-black font-mono tabular-nums leading-none ${hudPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {hudPnl >= 0 ? '+' : ''}{hudPnl.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  {hudPnl >= 0 ? '+₹' : '−₹'}{Math.abs(hudPnl).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </p>
               </div>
               <div>
@@ -1895,10 +1895,10 @@ export function ProTradeScannerScreen() {
               </div>
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Equity</p>
-                <p className="text-sm font-mono font-bold text-white leading-none">${accountBalance.toLocaleString()}</p>
+                <p className="text-sm font-mono font-bold text-white leading-none">₹{accountBalance.toLocaleString('en-IN')}</p>
               </div>
               <div>
-                <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">SPY Tide</p>
+                <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">NIFTY Tide</p>
                 <p className="text-sm font-mono font-black leading-none">
                   <span className={snapshot?.spyTrend5m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-400'}>
                     5m {snapshot?.spyTrend5m ?? '--'}
@@ -1943,7 +1943,7 @@ export function ProTradeScannerScreen() {
                 <div className="flex justify-between text-[9px] uppercase tracking-widest font-black mb-1">
                   <span className="text-slate-500">Daily Risk</span>
                   <span className={riskPct > 80 ? 'text-rose-400' : riskPct > 50 ? 'text-amber-400' : 'text-slate-400'}>
-                    ${usedRisk.toFixed(0)} / ${dailyLossLimit.toFixed(0)}
+                    ₹{usedRisk.toFixed(0)} / ₹{dailyLossLimit.toFixed(0)}
                   </span>
                 </div>
                 <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
@@ -1954,7 +1954,7 @@ export function ProTradeScannerScreen() {
                 <div className="flex justify-between text-[9px] uppercase tracking-widest font-black mb-1">
                   <span className="text-slate-500">Capital Deployed</span>
                   <span className={deployedPct > 80 ? 'text-amber-400' : 'text-slate-400'}>
-                    ${openNotional.toFixed(0)} / ${(accountBalance * 0.65).toFixed(0)}
+                    ₹{openNotional.toFixed(0)} / ₹{(accountBalance * 0.65).toFixed(0)}
                   </span>
                 </div>
                 <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
@@ -2031,17 +2031,17 @@ export function ProTradeScannerScreen() {
         <div>
           <h2 className="text-xl font-bold text-white tracking-tight">ProTrade Workflow</h2>
           <p className="mt-2 text-xs text-slate-300 max-w-4xl leading-relaxed">
-            Tickers move from screened universe → forming → confirmed → trade ready → ordered. Data from Alpaca IEX (live). Paper trades auto-open when a setup reaches Trade Ready and are mirrored to your Alpaca paper account.
+            Tickers move from screened universe → forming → confirmed → trade ready → ordered. Data from Kite NSE (live). Trades auto-open when a setup reaches Trade Ready and route to your Zerodha Kite account (MIS intraday).
           </p>
           <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-widest font-black">
             <span className={`px-3 py-1 rounded-full border ${stale ? 'border-amber-500/30 text-amber-300 bg-amber-500/10' : 'border-emerald-500/20 text-emerald-300 bg-emerald-500/10'}`}>
               {snapshot ? `Last refreshed ${lastUpdated?.toLocaleTimeString()}` : 'Loading'}
             </span>
             <span className="px-3 py-1 rounded-full border border-cyan-500/20 text-cyan-300 bg-cyan-500/10">
-              Provider: Alpaca IEX
+              Provider: Kite NSE
             </span>
             <span className={`px-3 py-1 rounded-full border ${universeFallback ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-violet-500/20 text-violet-300 bg-violet-500/10'}`}>
-              Universe: {snapshot ? `${rows.length} stocks${snapshot.universeBuiltAt ? ` · built ${toETTime(snapshot.universeBuiltAt)} ET` : ''}` : 'building…'}
+              Universe: {snapshot ? `${rows.length} stocks${snapshot.universeBuiltAt ? ` · built ${toETTime(snapshot.universeBuiltAt)} IST` : ''}` : 'building…'}
               {universeFallback && ' ⚠ fallback — click refresh to rebuild'}
             </span>
             {watchlist.symbols.length > 0 && (
@@ -2053,12 +2053,12 @@ export function ProTradeScannerScreen() {
               Auto refresh: {activeStage === 'forming' || activeStage === 'confirmed' || activeStage === 'locked' || activeStage === 'trade_ready' ? '15s hot set' : '60s'}
             </span>
             <span className="px-3 py-1 rounded-full border border-slate-600/40 text-slate-400 bg-slate-800/30">
-              SPY Tide: <span className={`font-black ${snapshot?.spyTrend5m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-300'}`}>{snapshot?.spyTrend5m || 'FLAT'}</span>
+              NIFTY Tide: <span className={`font-black ${snapshot?.spyTrend5m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-300'}`}>{snapshot?.spyTrend5m || 'FLAT'}</span>
             </span>
             {snapshot?.regime && (
               <span className={`px-3 py-1 rounded-full border text-xs font-semibold ${snapshot.regime.regime === 'BULL' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : snapshot.regime.regime === 'BEAR' ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-amber-500/40 bg-amber-500/10 text-amber-300'}`}>
                 Regime: {snapshot.regime.regime}
-                {snapshot.regime.spyEma200 ? ` · SPY ${snapshot.regime.spyPrice?.toFixed(0)} / EMA200 ${snapshot.regime.spyEma200.toFixed(0)}` : ''}
+                {snapshot.regime.spyEma200 ? ` · NIFTY ${snapshot.regime.spyPrice?.toFixed(0)} / EMA200 ${snapshot.regime.spyEma200.toFixed(0)}` : ''}
                 {snapshot.regime.vixLevel ? ` · VIX ${snapshot.regime.vixLevel.toFixed(1)}` : ''}
               </span>
             )}

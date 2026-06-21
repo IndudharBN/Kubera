@@ -91,7 +91,7 @@ function AlpacaPositionsScreen() {
         <div className="p-3 border-b border-white/5 flex justify-between items-center bg-white/5">
           <div className="flex items-center gap-3">
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Alpaca Paper Positions ({positions.length})
+              Kite Positions ({positions.length})
             </h2>
             {lastUpdated && (
               <span className="text-[10px] text-slate-500 font-mono">
@@ -182,7 +182,7 @@ function AlpacaOrdersScreen() {
       <div className="p-3 border-b border-white/5 flex justify-between items-center bg-white/5">
         <div className="flex items-center gap-2">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            Paper Orders · Sutra ({trades.length})
+            Orders · Kubera ({trades.length})
           </h2>
           <input
             type="date"

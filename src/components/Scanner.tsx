@@ -38,7 +38,7 @@ function SessionCard({ session }: { session: TradingSession }) {
     <div className="glass p-3 rounded-xl flex flex-col justify-center items-center gap-1 border border-white/10 min-w-[120px] text-center relative overflow-hidden bg-white/5">
       <p className="text-[18px] font-black text-white leading-tight uppercase tracking-tighter">{session.label}</p>
       <p className="text-[9px] font-bold text-slate-500 mt-1">{session.etTime || '--'}</p>
-      <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Session / ET</p>
+      <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Session / IST</p>
     </div>
   );
 }
@@ -55,7 +55,7 @@ function RegimeCard({ regime, session }: { regime: MarketRegime; session: Tradin
       </div>
       <div className="flex gap-2">
         {[
-          { label: 'SPY', val: regime.spyPrice?.toFixed(2) || '--' },
+          { label: 'NIFTY', val: regime.spyPrice?.toFixed(2) || '--' },
           { label: 'EMA 200', val: regime.spyEma200?.toFixed(2) || '--' },
           { label: 'VIX', val: regime.vixLevel?.toFixed(1) || '--', color: 'text-amber-400' },
           { label: 'SIZE', val: `${Math.round(regime.sizeMult * 100)}%`, color: 'text-emerald-400' },

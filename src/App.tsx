@@ -224,8 +224,8 @@ export default function App() {
     openPositions: livePositions.length,
     todaysPnl: brokerSnapshot ? livePnl : 0,
   };
-  const brokerStatus = 'Alpaca Paper';
-  const scannerStatus = 'ProTrade • Alpaca IEX';
+  const brokerStatus = 'Zerodha Kite';
+  const scannerStatus = 'ProTrade • Kite NSE';
 
   function handleScannerMetricFilter(nextFilter: ScannerMetricFilter) {
     setScannerMetricFilter(nextFilter);

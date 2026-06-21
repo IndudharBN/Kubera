@@ -80,18 +80,18 @@ function useEtClock() {
     const id = setInterval(() => setTick(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  const dayStr = tick.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' });
-  const timeStr = tick.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-  const h = parseInt(tick.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }), 10);
-  const m = parseInt(tick.toLocaleString('en-US', { timeZone: 'America/New_York', minute: '2-digit' }), 10);
+  const dayStr = tick.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short', month: 'short', day: 'numeric' });
+  const timeStr = tick.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const h = parseInt(tick.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }), 10);
+  const m = parseInt(tick.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', minute: '2-digit' }), 10);
   const mins = h * 60 + m;
-  const isWeekend = tick.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short' }).startsWith('S');
+  const isWeekend = tick.toLocaleString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).startsWith('S');
   let session: string;
   let sessionColor: string;
-  if (isWeekend || mins < 4 * 60 || mins >= 20 * 60) { session = 'CLOSED'; sessionColor = 'text-slate-500'; }
-  else if (mins < 9 * 60 + 30) { session = 'PRE'; sessionColor = 'text-amber-400'; }
-  else if (mins < 16 * 60) { session = 'RTH'; sessionColor = 'text-emerald-400'; }
-  else { session = 'AFTER'; sessionColor = 'text-amber-400'; }
+  // NSE IST: pre-open 09:00–09:15, RTH 09:15–15:30.
+  if (isWeekend || mins < 9 * 60 || mins >= 15 * 60 + 30) { session = 'CLOSED'; sessionColor = 'text-slate-500'; }
+  else if (mins < 9 * 60 + 15) { session = 'PRE'; sessionColor = 'text-amber-400'; }
+  else { session = 'RTH'; sessionColor = 'text-emerald-400'; }
   return { dayStr, timeStr, session, sessionColor };
 }
 
@@ -115,11 +115,11 @@ export function TopBar({ brokerStatus, scannerStatus }: { brokerStatus: string; 
           <span className="text-[10px] uppercase tracking-widest font-bold text-slate-300">Scanner: {scannerStatus}</span>
         </div>
 
-        {/* Live ET clock — always visible top right */}
+        {/* Live IST clock — always visible top right */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5">
           <span className={`text-[10px] font-black uppercase tracking-widest ${sessionColor}`}>{session}</span>
           <span className="text-[10px] font-mono text-slate-400 tabular-nums">{dayStr} ·</span>
-          <span className="text-[10px] font-mono font-bold text-white tabular-nums">{timeStr} ET</span>
+          <span className="text-[10px] font-mono font-bold text-white tabular-nums">{timeStr} IST</span>
         </div>
 
         <button
