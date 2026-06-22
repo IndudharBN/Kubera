@@ -71,21 +71,30 @@ function clearToken(): void {
   try { if (fs.existsSync(TOKEN_FILE)) fs.unlinkSync(TOKEN_FILE); } catch { /* best-effort */ }
 }
 
+type TokenCheck = 'valid' | 'invalid' | 'unreachable';
+
 /**
- * Confirm a token is actually accepted by Kite (a live getProfile call). The IST-date freshness
- * check is blind to Kite's ~07:30 IST expiry boundary — a token minted late-evening IST shares
- * today's IST date yet is already dead after the 07:30 reset. A live probe is the only reliable
- * staleness test, and it's the difference between the daemon trading and silently going blind.
+ * Probe whether Kite accepts a token (live getProfile). Crucially distinguishes a real token
+ * rejection ('invalid' → re-auth) from a NETWORK failure ('unreachable' → keep the token, retry
+ * later). Conflating the two is dangerous: a transient net blip (laptop Wi-Fi/NIC drop) would
+ * otherwise look like expiry and trigger a token wipe + re-login that ALSO fails offline — exactly
+ * the cascade that killed the daemon. On 'unreachable' we never destroy a possibly-valid token.
  */
-async function validateToken(token: string): Promise<boolean> {
-  if (!token || !kiteEnv.API_KEY) return false;
+async function checkToken(token: string): Promise<TokenCheck> {
+  if (!token || !kiteEnv.API_KEY) return 'invalid';
   try {
     const kc = new KiteConnect({ api_key: kiteEnv.API_KEY });
     kc.setAccessToken(token);
     await kc.getProfile();
-    return true;
-  } catch {
-    return false;
+    return 'valid';
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? '');
+    const errType = String((e as { error_type?: string })?.error_type ?? '');
+    if (errType === 'NetworkException' ||
+        /ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|getaddrinfo|fetch failed|network|timeout|No response from server/i.test(msg)) {
+      return 'unreachable';
+    }
+    return 'invalid'; // TokenException / bad api_key / genuine auth failure
   }
 }
 
@@ -164,20 +173,25 @@ export async function autoLogin(): Promise<string> {
  * Never throws — logs and returns false so the daemon still boots (and warns).
  */
 export async function ensureKiteLogin(): Promise<boolean> {
-  // 1. Already-active token (env KITE_ACCESS_TOKEN or runtime) — trust it ONLY if Kite accepts it.
+  // 1. Already-active token (env KITE_ACCESS_TOKEN or runtime).
   const active = accessToken();
-  if (active && (await validateToken(active))) return true;
-
-  // 2. Token persisted from an earlier login today — validate against Kite before reusing.
-  const cached = loadTodaysToken();
-  if (cached && cached !== active && (await validateToken(cached))) {
-    setRuntimeAccessToken(cached);
-    console.log('[kite] using cached access token (validated)');
-    return true;
+  if (active) {
+    const c = await checkToken(active);
+    if (c === 'valid') return true;
+    // Network down ≠ expired. Keep the token, retry next cycle — NEVER wipe + re-login offline.
+    if (c === 'unreachable') { console.warn('[kite] token check unreachable (network) — keeping current token, will retry'); return true; }
   }
 
-  // Whatever token we had is stale/rejected → drop it and force a fresh TOTP login.
-  if (cached || active) console.warn('[kite] cached/active token rejected by Kite (expired) — re-authenticating via TOTP');
+  // 2. Token persisted from an earlier login today.
+  const cached = loadTodaysToken();
+  if (cached && cached !== active) {
+    const c = await checkToken(cached);
+    if (c === 'valid') { setRuntimeAccessToken(cached); console.log('[kite] using cached access token (validated)'); return true; }
+    if (c === 'unreachable') { setRuntimeAccessToken(cached); console.warn('[kite] cached token check unreachable (network) — keeping, will retry'); return true; }
+  }
+
+  // Only here if Kite genuinely REJECTED the token (not a network blip) → drop it, fresh TOTP login.
+  if (cached || active) console.warn('[kite] token rejected by Kite (expired) — re-authenticating via TOTP');
   clearToken();
 
   if (!(kiteEnv.USER_ID && kiteEnv.PASSWORD && kiteEnv.TOTP_SECRET)) {
