@@ -150,16 +150,43 @@ export const INDEX_TOKENS = {
   INDIAVIX: 264969,
 } as const;
 
+// ── Historical-data rate limiter ──────────────────────────────────────────────
+// Kite caps the historical API at ~3 req/s. mapLimit bounds CONCURRENCY but not RATE, so a scan's
+// bursty fan-out (66 symbols × timeframes) trips "Too many requests". Serialize every historical
+// call through a gate spacing them ≥340ms (~2.9/s), and retry once on a 429.
+let _histChain: Promise<void> = Promise.resolve();
+let _lastHistAt = 0;
+const HIST_MIN_GAP_MS = 340;
+function histGate(): Promise<void> {
+  const next = _histChain.then(async () => {
+    const gap = Date.now() - _lastHistAt;
+    if (gap < HIST_MIN_GAP_MS) await new Promise((r) => setTimeout(r, HIST_MIN_GAP_MS - gap));
+    _lastHistAt = Date.now();
+  });
+  _histChain = next.catch(() => {});
+  return next;
+}
+function isRateLimit(e: unknown): boolean {
+  return /too many requests|rate limit|\b429\b/i.test(String((e as Error)?.message ?? ''));
+}
+
 export async function getCandlesByToken(
   token: number,
   interval: Interval,
   fromDate: Date,
   toDate: Date,
 ): Promise<Candle[]> {
-  const rows = (await kc().getHistoricalData(
-    token, KITE_INTERVAL[interval], fromDate, toDate,
-  )) as unknown as RawHistCandle[];
-  return rows.map((r) => ({
+  let rows: RawHistCandle[] | undefined;
+  for (let attempt = 1; attempt <= 2 && !rows; attempt++) {
+    await histGate();
+    try {
+      rows = (await kc().getHistoricalData(token, KITE_INTERVAL[interval], fromDate, toDate)) as unknown as RawHistCandle[];
+    } catch (e) {
+      if (isRateLimit(e) && attempt < 2) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      throw e;
+    }
+  }
+  return (rows ?? []).map((r) => ({
     time: new Date(r.date).toISOString(),
     open: r.open,
     high: r.high,
