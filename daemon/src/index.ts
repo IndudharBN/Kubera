@@ -1,4 +1,5 @@
 import './env'; // must be first — loads .env.daemon before any other import reads process.env
+import net from 'net';
 import { env } from './env';
 import { loadState, saveState, getState } from './stateStore';
 import { startScheduler } from './scheduler';
@@ -21,11 +22,30 @@ function toISTTime(): string {
   return new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour12: false });
 }
 
+// Single-instance guard, checked BEFORE any work (login / instruments / scan). If the daemon port
+// is already serving, another instance owns it → exit immediately so we never run a duplicate that
+// hammers the Kite rate limit. The port is the mutex; the EADDRINUSE handler in httpServer covers
+// the rare simultaneous-start race.
+function portInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host: '127.0.0.1' });
+    sock.setTimeout(1500);
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+    sock.on('error', () => resolve(false));
+  });
+}
+
 async function main() {
   console.log(`[kubera-daemon] starting — ${new Date().toISOString()}`);
   console.log(`[kubera-daemon] broker: ${env.BROKER}`);
   console.log(`[kubera-daemon] port: ${env.DAEMON_PORT}`);
   console.log(`[kubera-daemon] auto-execute: ${env.AUTO_EXECUTE}`);
+
+  if (await portInUse(env.DAEMON_PORT)) {
+    console.error(`[kubera-daemon] port ${env.DAEMON_PORT} already serving — another Kubera daemon is running. Exiting (no duplicate, no work done).`);
+    process.exit(0);
+  }
 
   const state = loadState();
   console.log(`[kubera-daemon] state loaded — dailyDate=${state.riskState.dailyDate}, firedToday=${state.firedToday.length} symbols`);
