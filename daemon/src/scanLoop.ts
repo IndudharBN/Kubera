@@ -40,7 +40,7 @@ export async function runFullScan(): Promise<void> {
   hotSetSymbols = newHotSet;
 
   const qualified = snapshot.rows.filter((r) => r.qualified).length;
-  console.log(`[scan] Full done — ${snapshot.rows.length} rows, ${qualified} qualified, hot-set ${newHotSet.length}, SPY 5m=${snapshot.spyTrend5m} 15m=${snapshot.spyTrend15m}`);
+  console.log(`[scan] Full done — ${snapshot.rows.length} rows, ${qualified} qualified, hot-set ${newHotSet.length}, NIFTY 5m=${snapshot.spyTrend5m} 15m=${snapshot.spyTrend15m}`);
   emit('snapshot_update', {
     rows: snapshot.rows,
     spyTrend5m: snapshot.spyTrend5m,
