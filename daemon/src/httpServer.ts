@@ -347,6 +347,16 @@ export function startHttpServer(): void {
     ws.on('error', () => {/* ignore client errors */});
   });
 
+  // Guard against duplicate instances: if the port is taken, another daemon is already running.
+  // Exit cleanly instead of becoming a zombie that still scans + hammers the Kite rate limit.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[httpServer] port ${env.DAEMON_PORT} already in use — another Kubera daemon is running. Exiting to avoid a duplicate instance.`);
+      process.exit(1);
+    }
+    console.error('[httpServer] server error:', err.message);
+  });
+
   server.listen(env.DAEMON_PORT, () => {
     console.log(`[httpServer] listening on port ${env.DAEMON_PORT} — REST + ws://localhost:${env.DAEMON_PORT}/ws`);
   });
