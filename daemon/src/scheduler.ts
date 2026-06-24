@@ -295,7 +295,7 @@ function tryFireTrades(): void {
     tradesFired = true;
     lastOrderAt = Date.now(); // throttle spacing for the next entry
     emit('trade_opened', newTrade);
-    console.log(`[executor] FIRE ${row.symbol} ${sig.strategyId} ${row.direction} entry=${newTrade.entry} stop=${newTrade.stop} target=${newTrade.target} qty=${newTrade.quantity} notional=$${newTrade.notional.toFixed(0)}`);
+    console.log(`[executor] FIRE ${row.symbol} ${sig.strategyId} ${row.direction} entry=${newTrade.entry} stop=${newTrade.stop} target=${newTrade.target} qty=${newTrade.quantity} notional=₹${newTrade.notional.toFixed(0)}`);
 
     // Submit bracket order to Alpaca paper account — async, does not block executor
     if (newTrade.direction !== 'NEUTRAL') {

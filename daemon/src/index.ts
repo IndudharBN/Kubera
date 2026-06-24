@@ -66,7 +66,7 @@ async function main() {
   const s = getState();
   console.log(`[kubera-daemon] ready at ${toISTTime()} IST`);
   console.log(`[kubera-daemon] watchlist: ${s.dayWatchlist.symbols.length} symbols`);
-  console.log(`[kubera-daemon] daily P&L: $${s.riskState.dailyRealizedPnl.toFixed(2)}`);
+  console.log(`[kubera-daemon] daily P&L: ₹${s.riskState.dailyRealizedPnl.toFixed(2)}`);
 
   startHttpServer();
   startScheduler();
