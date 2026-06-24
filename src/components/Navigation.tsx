@@ -23,8 +23,8 @@ export function Sidebar({ activeScreen, setActiveScreen, collapsed, onToggleColl
     <div className={`${collapsed ? 'w-16' : 'w-52'} border-r border-white/5 flex flex-col p-3 gap-1 glass z-20 transition-all duration-300 ease-out`}>
       <div className={`mb-8 flex items-center ${collapsed ? 'justify-center' : 'justify-between'} gap-2`}>
         <div className="flex items-center gap-2 min-w-0">
-        <div className="w-7 h-7 bg-indigo-600 rounded flex items-center justify-center font-bold text-white shadow-lg">S</div>
-          {!collapsed && <span className="font-bold tracking-tight text-lg text-white truncate">SUT<span className="text-indigo-400">RA</span></span>}
+        <div className="w-7 h-7 bg-indigo-600 rounded flex items-center justify-center font-bold text-white shadow-lg">K</div>
+          {!collapsed && <span className="font-bold tracking-tight text-lg text-white truncate">KUB<span className="text-indigo-400">ERA</span></span>}
         </div>
         {!collapsed && (
           <button
