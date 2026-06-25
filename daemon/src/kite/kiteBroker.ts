@@ -148,9 +148,13 @@ export async function getAccount(): Promise<KiteAccount> {
   // even when funded. Handle both shapes: prefer the segment itself, fall back to a wrapped .equity.
   const m = (await kc().getMargins('equity')) as unknown as RawUserMargin & { equity?: RawUserMargin };
   const eq = (m.equity ?? m) as RawUserMargin;
+  // Buying power = NET available margin (what Kite actually lets you deploy), same source as equity.
+  // available.cash is the OPENING cash balance — legitimately ₹0 when funds sit as net/live_balance
+  // (carried margin, collateral). Reading it first reported buyingPower=0 on a funded account because
+  // `?? ` only falls through on null/undefined, not on a present 0 — so a real 0 masked net.
   return {
     equity: Number(eq.net ?? eq.available?.live_balance ?? 0),
-    cash:   Number(eq.available?.cash ?? eq.net ?? 0),
+    cash:   Number(eq.net ?? eq.available?.live_balance ?? eq.available?.cash ?? 0),
   };
 }
 

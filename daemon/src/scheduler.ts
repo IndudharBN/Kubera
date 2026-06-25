@@ -215,12 +215,19 @@ function tryFireTrades(): void {
   let tradesFired = false;
 
   for (const row of snapshot.rows) {
+    // Execute ONLY genuine trade_ready setups. workflowStage is the strategy machine's verdict
+    // (live+fresh data, RR ok, not earnings/manual/blackout). A non-null tradePlan alone is NOT
+    // enough — locked (stale/non-live data), confirmed (earnings ±1d, manualOnly) rows also carry
+    // a plan, and firing on those means trading on a frozen quote or through an earnings guard.
+    if (row.workflowStage !== 'trade_ready') continue;
     if (!row.qualified || !row.tradePlan) continue;
     if (row.adrExhausted) { console.log(`[executor] ${row.symbol} ADR exhausted — no new entry`); continue; }
     if (Date.now() - lastOrderAt < 2500) break; // order-rate throttle (≤1 entry / ~2.5s)
 
     const sig = row.primaryStrategy;
     if (!sig) continue;
+    // Respect the strategy's own auto-ready flag — manual-review setups never auto-fire.
+    if (!sig.canAutoReady) { console.log(`[executor] ${row.symbol} manual-review only — no auto-fire`); continue; }
     const stratId = sig.strategyId ?? 'unknown';
 
     // Regime router: trend (BULL/BEAR) disables mean-reversion (S13);
