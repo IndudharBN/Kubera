@@ -12,7 +12,9 @@ export function isTideBlocked(
   const isReversal = strategyId === 'liquidity_sweep' || strategyId === 'ob_fvg_retest';
   if (isReversal) return false;
 
-  if (spyTrend5m === 'FLAT' && strategyId === 'orb_retest') return true;
+  // Flat NIFTY tide no longer VETOES an ORB breakout — a strong single-name breakout is a valid
+  // trade even when the index is directionless. Conviction is lower without an index tailwind, so
+  // buildPaperTrade sizes flat-tide ORB entries down to 50% instead of blocking them outright.
 
   const BOTH_TIDE_BLOCK = new Set(['vwap_pullback', 'rs_continuation', 'flag_break', 'vwap15m_pullback']);
   if (BOTH_TIDE_BLOCK.has(strategyId)) {

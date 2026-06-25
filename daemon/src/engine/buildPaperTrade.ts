@@ -69,6 +69,12 @@ export function buildPaperTrade(
       const which = !ok5m ? '5m+15m' : '15m';
       heatNote = ` [${which} counter-tide → 75% size]`;
     }
+    // Flat-index ORB breakout: no veto (was a hard tide block), but no index tailwind either —
+    // lower conviction, so half size. Applies on top of any counter-tide haircut above.
+    if (strategyId === 'orb_retest' && t5 === 'FLAT') {
+      tideMult = Math.min(tideMult, 0.5);
+      heatNote += ` [flat tide breakout → 50% size]`;
+    }
   }
 
   const betaMult = betaAdjustedSizingMult(row.beta);

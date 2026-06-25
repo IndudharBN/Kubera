@@ -442,6 +442,9 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
   const breakoutDistance = dir === 'BULL' ? (input.price - breakoutLevel) : (breakoutLevel - input.price);
   const minBreakout = input.atr20 * 0.25;
   const confirmedBreak = breakoutDistance >= minBreakout;
+  // Extended: price has run >1.5×ATR past the ORB level. A retest this deep would itself break
+  // structure, so the retest thesis is dead — this setup is a MISS, not a forming one.
+  const extended = breakoutDistance > input.atr20 * 1.5;
   const measuredMove = dir === 'BULL' ? breakoutLevel + orRange : breakoutLevel - orRange;
   const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const preferredTarget = dir === 'BULL' ? entry + risk * PREFERRED_RR : entry - risk * PREFERRED_RR;
@@ -453,7 +456,7 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
     range ? pass('Opening range formed', `${round(range.low, 2)}–${round(range.high, 2)}`) : fail('Opening range formed', 'Need first 15 min of 5m candles'),
     orbWidthOk ? pass('ORB width ≥0.5%', `${round(orbWidthPct * 100, 2)}% ✓`) : fail('ORB width ≥0.5%', `${round(orbWidthPct * 100, 2)}% — degenerate range: no institutional positioning`),
     confirmedBreak ? pass('ORB Breakout', `Clear of noise (+${round(breakoutDistance, 2)})`) : fail('ORB Breakout', `Inside noise floor (${round(minBreakout, 2)})`),
-    retest ? pass('Retest hold', 'Breakout level retested and held') : fail('Retest hold', 'Waiting for controlled retest'),
+    retest ? pass('Retest hold', 'Breakout level retested and held') : fail('Retest hold', extended ? `Missed — price extended ${round(breakoutDistance / input.atr20, 1)}×ATR past ORB, retest unlikely` : 'Waiting for controlled retest'),
     timeGateOk ? pass('Time gate ≥10:00 IST', 'ORB structure settled ✓') : fail('Time gate ≥10:00 IST', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} IST — wait for 10:00 IST (opening flow absorbed)`),
     input.rvol >= rvolMin ? pass(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× ✓`) : fail(`RVOL ≥${rvolMin}×`, `${round(input.rvol, 2)}× — ${earlySession ? 'early session (09:30–10:00) requires ≥1.5×' : 'ORB breakout requires RTH volume confirmation'}`),
     pass('ADR room', `${adrExhausted(input.candles.five, input.atr20) ? '>80% ATR used — watch' : '< 80% ATR used ✓'} — informational`),
@@ -461,13 +464,19 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
     ema1mCheck(input),
     spyTapeCheck(selfInput),
   ];
-  return signal('orb_retest', selfInput, checklist, tradePlan, 'S1 ORB retest: self-determined direction from ORB break + retest + ORB width ≥0.5% + stop 1×ATR behind structural level. Hard gates: selfDir, confirmedBreak, retest, orbWidthOk, rvol.', false, range ? [{
+  const sig = signal('orb_retest', selfInput, checklist, tradePlan, 'S1 ORB retest: self-determined direction from ORB break + retest + ORB width ≥0.5% + stop 1×ATR behind structural level. Hard gates: selfDir, confirmedBreak, retest, orbWidthOk, rvol.', false, range ? [{
     label: 'Opening Range',
     startTime: range.startTime,
     endTime: range.endTime,
     high: range.high,
     low: range.low,
   }] : []);
+  // Extended breakout with no retest = missed setup. Demote out of the forming/watchlist buckets
+  // (screened_universe is not a hot stage) so it stops masquerading as 'near trade-ready'.
+  if (extended && !retest && selfDir) {
+    return { ...sig, stage: 'screened_universe', reason: `${sig.reason} [extended ${round(breakoutDistance / input.atr20, 1)}×ATR — retest missed]` };
+  }
+  return sig;
 }
 
 export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
