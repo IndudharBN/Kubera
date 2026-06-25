@@ -426,11 +426,18 @@ export function buildRowFromAlpaca(
   const primaryStrategy = strategySignals[0] || null;
   const workflowStage: WorkflowStage = primaryStrategy?.stage ?? 'screened_universe';
 
+  // The row's headline direction must follow the strategy that actually produced the trade plan —
+  // not the screener's Option-C bias. A strategy self-determines its own side (e.g. S1 ORB shorts
+  // a downside break), so when it reaches a plan the screener bias can be the OPPOSITE side. Using
+  // the stale bias paints a BULL badge + bullish chart arrow on a short setup (NAUKRI bug).
+  const rowDirection: 'BULL' | 'BEAR' | 'NEUTRAL' =
+    primaryStrategy?.tradePlan ? primaryStrategy.direction : direction;
+
   return {
     symbol,
     company: symbol,
     exchange: 'NSE',
-    direction,
+    direction: rowDirection,
     price: round(price, 2),
     score: scored.score,
     // NSE-relaxed gate: trust the strategy's own confirmation. A non-null tradePlan means the
