@@ -30,6 +30,7 @@ export function saveTrades(trades: PaperTrade[]): void {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         fs.copyFileSync(TRADES_FILE, path.join(DATA_DIR, `trades.${stamp}.bak.json`));
         console.warn(`[trades] clearing ${existing.length} trades — backup saved to trades.${stamp}.bak.json`);
+        pruneBackups();
       }
     } catch {
       /* no existing file to back up */
@@ -38,6 +39,22 @@ export function saveTrades(trades: PaperTrade[]): void {
   const tmp = TRADES_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(trades, null, 2));
   fs.renameSync(tmp, TRADES_FILE);
+}
+
+// Keep only the most recent BACKUP_KEEP anti-wipe snapshots; delete older ones.
+// Names are ISO timestamps (lexicographically sortable), so a name sort == time sort.
+const BACKUP_KEEP = 10;
+function pruneBackups(): void {
+  try {
+    const baks = fs.readdirSync(DATA_DIR)
+      .filter((f) => /^trades\..*\.bak\.json$/.test(f))
+      .sort(); // ascending: oldest first
+    for (const f of baks.slice(0, Math.max(0, baks.length - BACKUP_KEEP))) {
+      fs.unlinkSync(path.join(DATA_DIR, f));
+    }
+  } catch (err) {
+    console.warn('[trades] backup prune failed:', (err as Error).message);
+  }
 }
 
 // Append one event line to the immutable ledger. Best-effort: a ledger failure

@@ -19,6 +19,7 @@ scripts/ls-export.json
 data/daemon-state.json
 data/universe-cache.json
 data/kite-universe-cache.json
+data/trades.*.bak.json
 
 # IDE
 .idea/
