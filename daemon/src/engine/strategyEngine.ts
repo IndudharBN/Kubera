@@ -278,6 +278,13 @@ function missing(checklist: StrategyChecklistItem[], tradePlan: TradePlan | null
   return output;
 }
 
+// Attach display-only provisional levels to a signal that has no executable (gated) plan yet,
+// so the chart can draw Entry/Stop/Target lines on a forming/near-ready setup. Execution NEVER
+// reads provisionalPlan — only the gated tradePlan — so this can't cause a premature entry.
+function withProvisional(sig: StrategySignal, provisional: TradePlan | null): StrategySignal {
+  return sig.tradePlan ? sig : { ...sig, provisionalPlan: provisional };
+}
+
 function signal(
   strategyId: StrategyId,
   input: StrategyInput,
@@ -476,7 +483,7 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
   if (extended && !retest && selfDir) {
     return { ...sig, stage: 'screened_universe', reason: `${sig.reason} [extended ${round(breakoutDistance / input.atr20, 1)}×ATR — retest missed]` };
   }
-  return sig;
+  return withProvisional(sig, planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
@@ -562,7 +569,7 @@ export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
     ema1mCheck(input),
     spySessionCheck(selfInput),
   ];
-  return signal('vwap_pullback', selfInput, checklist, tradePlan, 'S2 VWAP pullback: slope ≥0.1% + VWAP touch + rejection wick ≥25% + VWAP reclaim + RVOL≥0.8 + RS≥1.0. Stop: VWAP−0.5×ATR. Hard gates: selfDir, touchedValue, wickOk, reclaimed (above VWAP), rvolOk, rsOk.');
+  return withProvisional(signal('vwap_pullback', selfInput, checklist, tradePlan, 'S2 VWAP pullback: slope ≥0.1% + VWAP touch + rejection wick ≥25% + VWAP reclaim + RVOL≥0.8 + RS≥1.0. Stop: VWAP−0.5×ATR. Hard gates: selfDir, touchedValue, wickOk, reclaimed (above VWAP), rvolOk, rsOk.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
@@ -620,7 +627,7 @@ export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
     ema1mCheck(input),
     spyTapeCheck(selfInput),
   ];
-  return signal('rs_continuation', selfInput, checklist, tradePlan, 'S3 RS continuation: micro range break + RS≥0.5% + RVOL≥1.0 + stop ≤1.5%. Hard gates: breakout (self-determines direction), rsEdge, rvol, stopSide, stopWidthOk.');
+  return withProvisional(signal('rs_continuation', selfInput, checklist, tradePlan, 'S3 RS continuation: micro range break + RS≥0.5% + RVOL≥1.0 + stop ≤1.5%. Hard gates: breakout (self-determines direction), rsEdge, rvol, stopSide, stopWidthOk.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
@@ -746,7 +753,7 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
     ema1mCheck(input),
     spySessionCheck(selfInput),
   ];
-  return signal('liquidity_sweep', selfInput, checklist, tradePlan, `S4 Sweep (${sweepSource ?? 'no level'}): T1=${orOpposite ? 'OR opposite' : '2R'} T2=${orOpposite ? round(orOpposite, 2) : '2.5R'}`);
+  return withProvisional(signal('liquidity_sweep', selfInput, checklist, tradePlan, `S4 Sweep (${sweepSource ?? 'no level'}): T1=${orOpposite ? 'OR opposite' : '2R'} T2=${orOpposite ? round(orOpposite, 2) : '2.5R'}`), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
@@ -858,7 +865,7 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
     spyTapeCheck(selfInput),
   ];
   const sig = signal('ob_fvg_retest', selfInput, checklist, tradePlan, 'S5: OB or FVG retest. Hard gates: OB needs rejection candle + RVOL≥1.0×; FVG solo needs 15m trend aligned + RVOL≥1.5× + gap ≥ 0.25×ATR; both blocked after 15:00 ET.');
-  return { ...sig, enginePath: (atOb ? 'ob' : atFvg ? 'fvg' : undefined) as StrategySignal['enginePath'] };
+  return { ...withProvisional(sig, planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)), enginePath: (atOb ? 'ob' : atFvg ? 'fvg' : undefined) as StrategySignal['enginePath'] };
 }
 
 export function evaluateMssBreakout(input: StrategyInput): StrategySignal {
@@ -920,7 +927,7 @@ export function evaluateMssBreakout(input: StrategyInput): StrategySignal {
     ema1mCheck(input),
     spyTapeCheck(selfInput),
   ];
-  return signal('mss_breakout', selfInput, checklist, tradePlan, 'S6 MSS: structural break + clear path. Hard gates: mssOk (self-determines direction), bar2Ok (0.8×ATR), zoneBlocked (1×ATR), RVOL≥0.8.');
+  return withProvisional(signal('mss_breakout', selfInput, checklist, tradePlan, 'S6 MSS: structural break + clear path. Hard gates: mssOk (self-determines direction), bar2Ok (0.8×ATR), zoneBlocked (1×ATR), RVOL≥0.8.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 function checkS7VolumeSurge(input: StrategyInput): StrategySignal | null {
@@ -986,7 +993,7 @@ function checkS7VolumeSurge(input: StrategyInput): StrategySignal | null {
     pass('ADR room', `${!adrExhausted(input.candles.five, input.atr20) ? '< 80% ATR used ✓' : '>80% ATR used — watch sizing'} — informational`),
     spyTapeCheck(selfInput),
   ];
-  return signal('s7_volume_surge', selfInput, checklist, tradePlan, 'S7: Institutional 2× volume surge on 30m range break. Hard gates: volSpike (2× projected bar volume), selfDir (range break). RVOL informational — 2× surge implies session activity.');
+  return withProvisional(signal('s7_volume_surge', selfInput, checklist, tradePlan, 'S7: Institutional 2× volume surge on 30m range break. Hard gates: volSpike (2× projected bar volume), selfDir (range break). RVOL informational — 2× surge implies session activity.'), planFromLevelsT1T2(selfInput, price, stop, t1, t2, bar));
 }
 
 // ─── S8: EMA20 Bounce ────────────────────────────────────────────────────────
@@ -1081,8 +1088,8 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     spySessionCheck(selfInput),
   ];
 
-  return signal('ema20_bounce', selfInput, checklist, tradePlan,
-    'S8 EMA20 bounce (India-tuned v2): real EMA slope + touch + reclaim body≥50% + RVOL≥1.2 + VWAP-stacked + prior ≥1.2×ATR trend leg. Hard gates: selfDir, touchedEma, reclaimed, bounceStrong, rvol, vwapStacked, hadTrendLeg.');
+  return withProvisional(signal('ema20_bounce', selfInput, checklist, tradePlan,
+    'S8 EMA20 bounce (India-tuned v2): real EMA slope + touch + reclaim body≥50% + RVOL≥1.2 + VWAP-stacked + prior ≥1.2×ATR trend leg. Hard gates: selfDir, touchedEma, reclaimed, bounceStrong, rvol, vwapStacked, hadTrendLeg.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── S9: Flag Break ───────────────────────────────────────────────────────────
@@ -1153,8 +1160,8 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
     spyTapeCheck(selfInput),
   ];
 
-  return signal('flag_break', selfInput, checklist, tradePlan,
-    'S9 Flag Break: break side self-determines direction. 7-bar compression < 0.5×ATR + close through flag + RVOL≥1.0 + vol expansion. Hard gates: selfDir (break), flagFormed, rvolOk, volExpansion.');
+  return withProvisional(signal('flag_break', selfInput, checklist, tradePlan,
+    'S9 Flag Break: break side self-determines direction. 7-bar compression < 0.5×ATR + close through flag + RVOL≥1.0 + vol expansion. Hard gates: selfDir (break), flagFormed, rvolOk, volExpansion.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── 15m Strategy constants ───────────────────────────────────────────────────
@@ -1245,12 +1252,12 @@ export function evaluateOrb15mRetest(input: StrategyInput): StrategySignal {
     spySessionCheck(selfInput),
   ];
 
-  return signal(
+  return withProvisional(signal(
     'orb15m_retest', selfInput, checklist, tradePlan,
     'S10 E1: Unmitigated 15m OB (≥1.6×ATR impulse) retest. Self-determines direction from zone geometry. Hard gates: atOb, obReject, RVOL≥1.0, ADR≥3%, R:R≥2.0.',
     false,
     ob && atOb ? [{ label: '15m OB Zone', startTime: fifteen[ob.index]?.time ?? '', endTime: fifteen[fifteen.length - 1]?.time ?? '', high: ob.high, low: ob.low }] : [],
-  );
+  ), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── S11: 15m VWAP Pullback ───────────────────────────────────────────────────
@@ -1320,7 +1327,7 @@ export function evaluateVwap15mPullback(input: StrategyInput): StrategySignal {
     rrOk ? pass('R:R ≥2.0', '✓') : fail('R:R ≥2.0', 'Reward insufficient vs 1×ATR stop'),
     pass('15m trend', `${input.trend15m}${selfInput.trendAligned ? ' aligned ✓' : ''} — informational`),
   ];
-  return signal('vwap15m_pullback', selfInput, checklist, tradePlan, 'S11 15m VWAP pullback: self-determined from 15m EMA9 slope. Hard gates: selfDir (slope ≥0.05%), touchedVwap, reclaimed, RS≥0.5%, RVOL≥1.0, R:R≥2.0.');
+  return withProvisional(signal('vwap15m_pullback', selfInput, checklist, tradePlan, 'S11 15m VWAP pullback: self-determined from 15m EMA9 slope. Hard gates: selfDir (slope ≥0.05%), touchedVwap, reclaimed, RS≥0.5%, RVOL≥1.0, R:R≥2.0.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── S12: 15m EMA20 Bounce ───────────────────────────────────────────────────
@@ -1396,7 +1403,7 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
     pass('VWAP', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above ✓' : 'Below ✓') : 'misaligned'} — informational`),
     timeGateOk ? pass('Time gate ≥10:30 IST', '1h15m into session ✓') : fail('Time gate ≥10:30 IST', `${etNow.getHours()}:${String(etNow.getMinutes()).padStart(2, '0')} IST — S12 waits until 10:30 (15m trend developed)`),
   ];
-  return signal('ema20_bounce_15m', selfInput, checklist, tradePlan, 'S12 15m EMA20 bounce: self-determined direction from 15m EMA20 slope + 45m touch + reclaim + RVOL≥1.0 + R:R≥2.0 + time gate ≥10:30 IST. Hard gates: selfDir (slope ≥0.1% per 1h), touchedEma, reclaimed, rvolOk, rrOk, timeGateOk.');
+  return withProvisional(signal('ema20_bounce_15m', selfInput, checklist, tradePlan, 'S12 15m EMA20 bounce: self-determined direction from 15m EMA20 slope + 45m touch + reclaim + RVOL≥1.0 + R:R≥2.0 + time gate ≥10:30 IST. Hard gates: selfDir (slope ≥0.1% per 1h), touchedEma, reclaimed, rvolOk, rrOk, timeGateOk.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── S13: Range-Bound Mean Reversion ─────────────────────────────────────────
@@ -1484,7 +1491,7 @@ export function evaluateRangeBoundReversion(input: StrategyInput): StrategySigna
     pass('VWAP target', `${round(input.vwap, 2)} — T1 scale-out; hold 50% to 2R if trend continues`),
   ];
 
-  return signal('range_reversion', selfInput, checklist, tradePlan,
+  return withProvisional(signal('range_reversion', selfInput, checklist, tradePlan,
     'S13 Range Reversion: self-determined direction from range extreme + 30% rejection wick + R:R≥1.5 to VWAP. SIDEWAYS-optimised — self-selects via range geometry.',
     false, rangeOk ? [{
       label: 'Session Range',
@@ -1492,7 +1499,7 @@ export function evaluateRangeBoundReversion(input: StrategyInput): StrategySigna
       endTime: rangeBars[rangeBars.length - 1].time,
       high: rangeHigh,
       low: rangeLow,
-    }] : []);
+    }] : []), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 // ─── S14: 1m Sniper (E4) ─────────────────────────────────────────────────────
@@ -1620,12 +1627,12 @@ export function evaluateSniper1m(input: StrategyInput): StrategySignal {
     spySessionCheck(selfInput),
   ];
 
-  return signal(
+  return withProvisional(signal(
     'sniper_1m', selfInput, checklist, tradePlan,
     'S14 E4: 1m OB inside confirmed 15m or 5m OB zone. Tightest stop (0.3×ATR), best R:R. Promotes to GOLD when S10 or S5-ob also fires. Hard gates: HTF backing, atOb1m, obReject1m, RVOL≥1.0, R:R≥2.0.',
     false,
     ob1m && atOb1m ? [{ label: '1m OB Zone', startTime: one[ob1m.index]?.time ?? '', endTime: one[one.length - 1]?.time ?? '', high: ob1m.high, low: ob1m.low }] : [],
-  );
+  ), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
 
 const SYMBOL_STRATEGY_EXCLUSIONS: Partial<Record<string, StrategyId[]>> = {

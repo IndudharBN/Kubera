@@ -56,37 +56,43 @@ export function ProTradeCandlePreview({ row }: { row: ProTradeRow | null }) {
     }));
     series.setData(data);
 
-    if (row.tradePlan) {
+    // Draw the executable (gated) plan if present; otherwise fall back to the provisional plan so
+    // a forming/near-ready setup still shows where Entry/Stop/Target WOULD be. Provisional lines are
+    // dimmed + tagged so they're visually distinct from a confirmed, trade-ready plan.
+    const plan = row.tradePlan ?? row.provisionalPlan ?? null;
+    const provisional = !row.tradePlan && !!row.provisionalPlan;
+    if (plan) {
+      const tag = provisional ? ' (setup)' : '';
       series.createPriceLine({
-        price: row.tradePlan.entry,
-        color: '#38bdf8',
-        lineWidth: 2,
-        lineStyle: 0,
+        price: plan.entry,
+        color: provisional ? '#0e7490' : '#38bdf8',
+        lineWidth: provisional ? 1 : 2,
+        lineStyle: provisional ? 1 : 0,
         axisLabelVisible: true,
-        title: 'Entry',
+        title: `Entry${tag}`,
       });
       series.createPriceLine({
-        price: row.tradePlan.stop,
-        color: '#fb7185',
-        lineWidth: 2,
+        price: plan.stop,
+        color: provisional ? '#9f1239' : '#fb7185',
+        lineWidth: provisional ? 1 : 2,
         lineStyle: 2,
         axisLabelVisible: true,
-        title: 'Stop',
+        title: `Stop${tag}`,
       });
       series.createPriceLine({
-        price: row.tradePlan.target,
-        color: '#34d399',
-        lineWidth: 2,
+        price: plan.target,
+        color: provisional ? '#047857' : '#34d399',
+        lineWidth: provisional ? 1 : 2,
         lineStyle: 2,
         axisLabelVisible: true,
-        title: 'Target',
+        title: `Target${tag}`,
       });
       createSeriesMarkers(series, [{
-        time: toTime(row.tradePlan.triggerCandleTime),
+        time: toTime(plan.triggerCandleTime),
         position: row.direction === 'BEAR' ? 'aboveBar' : 'belowBar',
-        color: '#facc15',
+        color: provisional ? '#a16207' : '#facc15',
         shape: row.direction === 'BEAR' ? 'arrowDown' : 'arrowUp',
-        text: row.primaryStrategy?.strategyName || 'Trigger',
+        text: (row.primaryStrategy?.strategyName || 'Trigger') + tag,
       }]);
     }
 
@@ -122,7 +128,7 @@ export function ProTradeCandlePreview({ row }: { row: ProTradeRow | null }) {
         </div>
         <div className="text-right">
           <p className="text-[10px] uppercase tracking-widest text-slate-500 font-black">R:R</p>
-          <p className="text-xs text-emerald-300 font-black">{row.tradePlan ? row.tradePlan.rr.toFixed(2) : '--'}</p>
+          <p className="text-xs text-emerald-300 font-black">{(row.tradePlan ?? row.provisionalPlan) ? `${(row.tradePlan ?? row.provisionalPlan)!.rr.toFixed(2)}${!row.tradePlan ? ' (setup)' : ''}` : '--'}</p>
         </div>
       </div>
       <div ref={hostRef} className="h-[280px] w-full" />

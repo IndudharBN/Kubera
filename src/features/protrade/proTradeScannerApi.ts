@@ -81,6 +81,7 @@ export interface ProTradeRow {
   strategySignals: StrategySignal[];
   primaryStrategy: StrategySignal | null;
   tradePlan: StrategySignal['tradePlan'];
+  provisionalPlan?: StrategySignal['tradePlan']; // display-only levels for a not-yet-ready setup
   confidence: number;
   dataStatus: MarketDataProviderStatus;
   candles: {

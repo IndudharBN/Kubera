@@ -85,6 +85,7 @@ export interface StrategySignal {
   checklist: StrategyChecklistItem[];
   missing: string[];
   tradePlan: TradePlan | null;
+  provisionalPlan?: TradePlan | null; // display-only levels when not yet trade_ready; never executed
   zones: ChartZone[];
   canAutoReady: boolean;
   orderBlockReason: string;
