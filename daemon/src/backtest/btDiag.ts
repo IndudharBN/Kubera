@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     const row = buildRowFromAlpaca(SYM, meta, candleSet, providerStatus, 'none', {}, null, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, nD);
 
     nBars++;
-    atrPcts.push(row.atrPct); rvols.push(meta.rvolEst); scores.push(row.score); dvols.push(row.dollarVolM);
+    atrPcts.push(row.atrPct); rvols.push(meta.rvolEst); scores.push(row.score); dvols.push(row.turnoverCr);
     dirCount[row.direction]++;
     if (row.direction !== 'NEUTRAL') nNonNeutral++;
     if (row.basePass) nBasePass++;

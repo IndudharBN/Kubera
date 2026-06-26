@@ -7,6 +7,7 @@ import type { Candle, CandleSet } from './ohlcv';
 import { closes, last, round } from './ohlcv';
 import { evaluateStrategies } from './strategyEngine';
 import { istDateOf, istHourOf, istMinuteOf } from './tzfast';
+import { isNseHoliday, nseHolidayName, istDate } from '../nse';
 import { stampGroupClassification } from './confluenceClassifier';
 import type { MarketDataProviderStatus, StrategyId, StrategySignal, WorkflowStage } from './workflowTypes';
 import { workflowStageRank } from './workflowTypes';
@@ -50,7 +51,7 @@ export interface ProTradeRow {
   atr20: number;
   atrPct: number;
   adrExhausted: boolean;
-  dollarVolM: number;
+  turnoverCr: number;
   mktCapB: number | null;
   sharesOutstanding: number;
   catalyst: CatalystTier;
@@ -107,6 +108,30 @@ export interface ProTradeSnapshot {
   spyTrend5m: 'UP' | 'DOWN' | 'FLAT';
   spyTrend15m: 'UP' | 'DOWN' | 'FLAT';
   regime: MarketRegime;
+  marketLive: boolean;   // ground truth: is NSE actually trading right now (data-fresh)?
+  marketStatus: string;  // human reason: "Market open" | "NSE holiday — Muharram" | "Pre-market" | …
+}
+
+/**
+ * Authoritative "is the NSE actually trading right now" signal — driven by DATA FRESHNESS, not a
+ * static calendar. During session hours, a live feed means at least one large-cap shows real turnover
+ * (₹1cr+). Zero turnover market-wide at 11:00 IST = closed (holiday/halt) or a stale/dead feed. This
+ * catches unlisted holidays (e.g. the calendar missing Muharram) AND data outages — both of which
+ * mean "stand down." The holiday calendar only supplies the human-readable name.
+ */
+export function computeMarketStatus(rows: ProTradeRow[]): { marketLive: boolean; marketStatus: string } {
+  const today = istDate();
+  const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const dow = istNow.getDay();
+  const mins = istNow.getHours() * 60 + istNow.getMinutes();
+  if (dow === 0 || dow === 6) return { marketLive: false, marketStatus: 'Weekend — NSE closed' };
+  if (isNseHoliday(today)) return { marketLive: false, marketStatus: `NSE holiday — ${nseHolidayName(today) ?? 'closed'}` };
+  if (mins < 9 * 60 + 15) return { marketLive: false, marketStatus: 'Pre-market — NSE opens 09:15 IST' };
+  if (mins >= 15 * 60 + 30) return { marketLive: false, marketStatus: 'Market closed — post-session' };
+  const live = rows.some((r) => r.turnoverCr >= 1);
+  return live
+    ? { marketLive: true, marketStatus: 'Market open' }
+    : { marketLive: false, marketStatus: 'No live data — market closed (unlisted holiday) or feed stale' };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -246,7 +271,7 @@ function scoreRow(input: {
   rvol: number;
   gapPct: number;
   atrPct: number;
-  dollarVolM: number;
+  turnoverCr: number;
   vwapAligned: boolean;
   trendAligned: boolean;
   trend15mAligned: boolean;
@@ -281,8 +306,10 @@ function scoreRow(input: {
   else if (input.atrPct >= 1.2) { score += 4; reasons.push('range acceptable'); }
   else reasons.push('range low');
 
-  if (input.dollarVolM >= 25) { score += 6; reasons.push('liquid'); }
-  else if (input.dollarVolM >= 3) { score += 3; reasons.push('liquidity acceptable'); }
+  // NSE turnover tiers (₹ crore). Large-caps do 100s of cr/day; ≥₹50cr = deep liquidity,
+  // ≥₹10cr = tradeable intraday, below that the book is thin for stop fills.
+  if (input.turnoverCr >= 50) { score += 6; reasons.push('deep liquidity'); }
+  else if (input.turnoverCr >= 10) { score += 3; reasons.push('liquidity acceptable'); }
   else reasons.push('liquidity weak');
 
   if (input.catalyst === 'hard') { score += 12; reasons.push('hard catalyst'); }
@@ -334,7 +361,8 @@ export function buildRowFromAlpaca(
   const price = meta.price;
   const atr20 = computeAtr20(daily);
   const atrPct = price > 0 ? (atr20 / price) * 100 : 0;
-  const dollarVolM = (price * meta.todayVolume) / 1_000_000;
+  // NSE turnover in ₹ crore (1 crore = ₹10M). Native NSE unit, not US $ millions.
+  const turnoverCr = (price * meta.todayVolume) / 10_000_000;
 
   // Hard ADR-exhaustion: once today's range ≥ full ATR20, the move is largely done —
   // block new entries (vs Sutra's size-halving). Stock-analyzer ADR_EXHAUST_PCT behavior.
@@ -388,11 +416,11 @@ export function buildRowFromAlpaca(
   const failures: string[] = [];
   if (price < 50 || price > 15000) failures.push('Price outside ₹50–₹15,000');
   if (atrPct < 1.5 || atrPct > 12) failures.push(`ATR% ${atrPct.toFixed(1)}% outside 1.5–12% range`);
-  if (dollarVolM < 3) failures.push('Turnover below ₹3M');
+  if (turnoverCr < 5) failures.push(`Turnover ₹${turnoverCr.toFixed(1)}cr below ₹5cr floor`);
   const basePass = failures.length === 0;
   const baseReason = failures.length ? failures.join(' | ') : 'Price OK, ATR% OK, dollar vol OK';
 
-  const scored = scoreRow({ rvol: meta.rvolEst, gapPct: meta.gapPct, atrPct, dollarVolM, vwapAligned, trendAligned, trend15mAligned, catalyst, sectorAligned, smallFloat });
+  const scored = scoreRow({ rvol: meta.rvolEst, gapPct: meta.gapPct, atrPct, turnoverCr, vwapAligned, trendAligned, trend15mAligned, catalyst, sectorAligned, smallFloat });
 
   const candles = { one, five, fifteen, daily };
   const { disabledStrategies } = getRiskSettings();
@@ -452,7 +480,7 @@ export function buildRowFromAlpaca(
     atr20: round(atr20, 3),
     atrPct: round(atrPct, 2),
     adrExhausted,
-    dollarVolM: round(dollarVolM, 1),
+    turnoverCr: round(turnoverCr, 1),
     mktCapB: null,
     sharesOutstanding: getFloatFromCache(symbol),
     catalyst,
@@ -615,5 +643,6 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
     spyTrend5m,
     spyTrend15m,
     regime,
+    ...computeMarketStatus(rows),
   };
 }

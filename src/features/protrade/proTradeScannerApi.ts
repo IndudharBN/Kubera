@@ -49,7 +49,7 @@ export interface ProTradeRow {
   reason: string;
   atr20: number;
   atrPct: number;
-  dollarVolM: number;
+  turnoverCr: number;
   mktCapB: number | null;
   sharesOutstanding: number;
   catalyst: CatalystTier;
@@ -106,6 +106,8 @@ export interface ProTradeSnapshot {
   spyTrend5m: 'UP' | 'DOWN' | 'FLAT';
   spyTrend15m: 'UP' | 'DOWN' | 'FLAT';
   regime: MarketRegime;
+  marketLive?: boolean;
+  marketStatus?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -238,7 +240,7 @@ function scoreRow(input: {
   rvol: number;
   gapPct: number;
   atrPct: number;
-  dollarVolM: number;
+  turnoverCr: number;
   vwapAligned: boolean;
   trendAligned: boolean;
   trend15mAligned: boolean;
@@ -271,8 +273,8 @@ function scoreRow(input: {
   else if (input.atrPct >= 2.5) { score += 4; reasons.push('range acceptable'); }
   else reasons.push('range low');
 
-  if (input.dollarVolM >= 25) { score += 6; reasons.push('liquid'); }
-  else if (input.dollarVolM >= 3) { score += 3; reasons.push('liquidity acceptable'); }
+  if (input.turnoverCr >= 50) { score += 6; reasons.push('deep liquidity'); }
+  else if (input.turnoverCr >= 10) { score += 3; reasons.push('liquidity acceptable'); }
   else reasons.push('liquidity weak');
 
   if (input.catalyst === 'hard') { score += 12; reasons.push('hard catalyst'); }
@@ -324,7 +326,7 @@ function buildRowFromAlpaca(
   const price = meta.price;
   const atr20 = computeAtr20(daily);
   const atrPct = price > 0 ? (atr20 / price) * 100 : 0;
-  const dollarVolM = (price * meta.todayVolume) / 1_000_000;
+  const turnoverCr = (price * meta.todayVolume) / 10_000_000; // NSE turnover in ₹ crore
 
   const vwap = five.length ? sessionVwap(five) : price;
   const trend5m = candleTrend(five);
@@ -371,11 +373,11 @@ function buildRowFromAlpaca(
   const failures: string[] = [];
   if (price < 1 || price > 1500) failures.push('Price outside $1–$1500');
   if (atrPct < 2.5 || atrPct > 12) failures.push(`ATR% ${atrPct.toFixed(1)}% outside 2.5–12% range`);
-  if (dollarVolM < 3) failures.push('Dollar volume below $3M');
+  if (turnoverCr < 5) failures.push(`Turnover ₹${turnoverCr.toFixed(1)}cr below ₹5cr floor`);
   const basePass = failures.length === 0;
   const baseReason = failures.length ? failures.join(' | ') : 'Price OK, ATR% OK, dollar vol OK';
 
-  const scored = scoreRow({ rvol: meta.rvolEst, gapPct: meta.gapPct, atrPct, dollarVolM, vwapAligned, trendAligned, trend15mAligned, catalyst, sectorAligned, smallFloat });
+  const scored = scoreRow({ rvol: meta.rvolEst, gapPct: meta.gapPct, atrPct, turnoverCr, vwapAligned, trendAligned, trend15mAligned, catalyst, sectorAligned, smallFloat });
 
   const candles = { one, five, fifteen, daily };
   const { disabledStrategies } = getRiskSettings();
@@ -421,7 +423,7 @@ function buildRowFromAlpaca(
     reason: `${baseReason} | ${scored.reason}`,
     atr20: round(atr20, 3),
     atrPct: round(atrPct, 2),
-    dollarVolM: round(dollarVolM, 1),
+    turnoverCr: round(turnoverCr, 1),
     mktCapB: null,
     sharesOutstanding: getFloatFromCache(symbol),
     catalyst,

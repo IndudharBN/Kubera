@@ -1,4 +1,4 @@
-import { fetchProTradeScannerSnapshot, fetchHotSetSnapshot } from './engine/proTradeScannerApi';
+import { fetchProTradeScannerSnapshot, fetchHotSetSnapshot, computeMarketStatus } from './engine/proTradeScannerApi';
 import type { ProTradeSnapshot, ProTradeRow } from './engine/proTradeScannerApi';
 import { barStream } from './barStream';
 import { getState } from './stateStore';
@@ -40,7 +40,7 @@ export async function runFullScan(): Promise<void> {
   hotSetSymbols = newHotSet;
 
   const qualified = snapshot.rows.filter((r) => r.qualified).length;
-  console.log(`[scan] Full done — ${snapshot.rows.length} rows, ${qualified} qualified, hot-set ${newHotSet.length}, NIFTY 5m=${snapshot.spyTrend5m} 15m=${snapshot.spyTrend15m}`);
+  console.log(`[scan] Full done — ${snapshot.rows.length} rows, ${qualified} qualified, hot-set ${newHotSet.length}, NIFTY 5m=${snapshot.spyTrend5m} 15m=${snapshot.spyTrend15m} — ${snapshot.marketStatus}`);
   emit('snapshot_update', {
     rows: snapshot.rows,
     spyTrend5m: snapshot.spyTrend5m,
@@ -51,6 +51,8 @@ export async function runFullScan(): Promise<void> {
     qualifiedCount: qualified,
     universeSize: snapshot.rows.length,
     universeFallback: isUniverseFallback(),
+    marketLive: snapshot.marketLive,
+    marketStatus: snapshot.marketStatus,
   });
 }
 
@@ -68,6 +70,7 @@ export async function runHotSetScan(): Promise<void> {
     ...currentSnapshot,
     rows: merged,
     fetchedAt: new Date().toISOString(),
+    ...computeMarketStatus(merged), // keep market-live fresh between full scans
   };
 
   // Re-sync hot-set subscriptions

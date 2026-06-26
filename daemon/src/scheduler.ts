@@ -78,6 +78,7 @@ let monitorRunning = false;
 let accountBalance = 0;   // capped at CAPITAL_CAP_INR — drives sizing (real Kite equity; 0 until funded)
 let accountEquity = 0;    // real broker equity — drives the drawdown kill
 let lastOrderAt = 0;            // order-rate throttle
+let lastStandDownLogAt = 0;     // throttle the "market not live" stand-down log
 
 async function syncAccount(): Promise<void> {
   try {
@@ -192,6 +193,16 @@ function tryFireTrades(): void {
   if (accountBalance <= 0) return;
   const snapshot = getCurrentSnapshot();
   if (!snapshot) return;
+
+  // Ground-truth market-live gate: never fire on a frozen/stale feed (closed day, unlisted holiday,
+  // or data outage). Authoritative over the holiday calendar — driven by live turnover freshness.
+  if (!snapshot.marketLive) {
+    if (Date.now() - lastStandDownLogAt > 60_000) {
+      console.log(`[executor] standing down — ${snapshot.marketStatus}`);
+      lastStandDownLogAt = Date.now();
+    }
+    return;
+  }
 
   const etMins = etMinutes();
   // Skip the opening 15 min (09:15–09:30 IST — gap-violent, wide spreads); no new entries after 15:15.

@@ -1,6 +1,32 @@
-# Sutra Trading Terminal
+# Kubera — NSE Intraday Trading System
 
-An intraday day-trading terminal built in React + TypeScript. Combines a live multi-strategy scanner with automated paper trading execution on Alpaca's paper account, risk management, and performance analytics.
+Automated intraday equity trading on the **NSE (India)** via **Zerodha Kite Connect**. A live
+multi-strategy scanner replays the real engine over a dynamic large-cap universe, builds risk-sized
+trade plans, and (when armed) places live bracket orders. React + TypeScript dashboard, a persistent
+Node.js daemon, and full NSE-cost-aware risk management.
+
+> Kubera is the NSE descendant of the original US/Alpaca "Sutra" terminal. The engine logic was
+> ported; the market, broker, currency, timezone, and session rules are now **India-native**.
+
+---
+
+## ⚠️ Operational Status — READ FIRST
+
+These are the items that **gate or risk live trading**. Confirm all of them before relying on the system.
+
+> ### 🔴 Live-trading prerequisites (must be true to place real orders)
+> 1. **`DAEMON_AUTO_EXECUTE=true`** in `daemon/.env.daemon` — execution is OFF by default. Kill switch: set back to `false` + restart.
+> 2. **Static IP whitelisted in Kite** — *SEBI mandate (1 Apr 2026)*. Set at the **Kite developer account / Profile level**, NOT the app page. A **dynamic home IP will not hold** → use a **VPS / ISP static IP**. Missing it = every order rejected with *"No IPs configured for this app."*
+> 3. **Funded Kite account** — `accountBalance > 0` (real equity); the executor no-ops on ₹0.
+> 4. **Valid daily Kite token** — expires ~07:30 IST; TOTP auto-login refreshes it *only while the daemon is up and the network is healthy*.
+
+> ### 🟠 Known gaps (harden before unattended live use)
+> - **Market-closed / holiday blindness** — the daemon scans a **frozen feed** on closed days (holiday calendar is incomplete). It should stand down when `quote.last_trade_time` isn't today / volume is market-wide zero. Symptom: `0 qualified`, `turnover ₹0`, last trade dated yesterday.
+> - **Token + network self-heal** — overnight DNS/network blips can leave the token expired and the daemon **silently blind**; a clean restart fixes it. Needs louder alerting.
+> - **Process reliability** — run the daemon under **pm2 (autorestart)** + morning-start task, not a bare `node` window.
+
+> ### 🟢 Recent fixes (this session — branch `india-nse`)
+> Executor gates on `trade_ready && canAutoReady` · Kite `buyingPower` from net margin · `.bak` backups capped at 10 · S1 ORB fires on flat tide (half size) + extended-setup expiry · row direction follows the plan's strategy · **provisional Entry/Stop/Target chart lines on forming setups** (display-only) · **NSE-native turnover in ₹ crore** (`turnoverCr`, ₹5cr floor; UI shows "Turnover ₹X cr"). Full detail in [Recent Changes](#recent-changes-june-2026-branch-india-nse).
 
 ---
 
@@ -8,331 +34,306 @@ An intraday day-trading terminal built in React + TypeScript. Combines a live mu
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, TypeScript, Tailwind CSS 3.4, Vite 6 |
-| Daemon | Node.js process — scanner engine, risk manager, trade execution, REST + WebSocket |
-| Market Data | Alpaca IEX feed (bars, snapshots, news, WebSocket stream) |
-| Paper Execution | Alpaca Paper Trading API (bracket orders) |
-| Trade Persistence | `data/trades.json` — written by daemon, survives browser refreshes and reboots |
-| Process Manager | Daemon: direct node (visible cmd window). UI: pm2 (`sutra-ui`). Auto-start: Windows Task Scheduler. |
-| Charting | TradingView widget + lightweight-charts (equity curve) |
+| Frontend | React 18, TypeScript, Tailwind CSS, Vite 6 (port **5004**) |
+| Daemon | Node.js — scanner engine, risk manager, executor, REST + WebSocket (port **5003**) |
+| Broker / Execution | **Zerodha Kite Connect** (`BROKER=kite`); legacy Alpaca path retained behind `BROKER=alpaca` |
+| Market Data | Kite historical bars + full quotes (price, OHLC, cumulative volume); NIFTY 50 + India VIX index tokens |
+| Currency / Timezone | **₹ INR**, **IST (Asia/Kolkata)**, NSE session 09:15–15:30 |
+| Persistence | `data/trades.json` (live view) + `data/trade-ledger.jsonl` (append-only audit) |
+| Process Manager | UI: pm2 (`kubera-ui`). Daemon: node (cmd window or pm2 `sutra-daemon`). Morning auto-start: Task Scheduler |
+| Charting | TradingView embed (full chart) + lightweight-charts ("Candle Evidence" with Entry/Stop/Target lines) |
 
 ---
 
-## Running Locally
+## Strategies (S1–S14)
 
-### First-time setup
+The engine evaluates 14 strategies each scan. Each self-determines its own direction and produces a
+trade plan only when its **hard gates** pass. Codes/labels live in `daemon/src/engine/workflowTypes.ts`.
 
-```powershell
-npm install
-
-# Daemon env vars — copy and fill in your Alpaca paper keys
-copy daemon\.env.daemon.example daemon\.env.daemon
-
-# Build the daemon
-cd daemon && npm run build && cd ..
-
-# Register Windows Task Scheduler auto-start (run once, no admin needed)
-powershell -ExecutionPolicy Bypass -File .\REGISTER_AUTOSTART.ps1
-
-# Start everything
-.\ENSURE_RUNNING.bat
-```
-
-Open: `http://localhost:3006`
-
-### Day-to-day
-
-**Nothing to do.** The Windows Task Scheduler task `Sutra-EnsureRunning` fires on every
-workstation unlock and logon — Sutra starts itself.
-
-Open `http://localhost:3006` and check the **● Daemon** badge is green in the top bar.
-
-### Daily restart (recommended)
-
-Leaving the daemon running is fine, but a fresh start each morning is good hygiene: it
-gives a clean Alpaca WebSocket, clears in-memory caches, and **re-arms the 8:30 AM ET
-universe rebuild** — that one-shot only schedules if the daemon starts *before* 8:30. Run
-**before 8:30 ET** (before 8:00 is ideal, to catch the full pre-market tape):
-
-```bat
-RESTART_DAEMON.bat
-```
-
-If you power the machine off overnight, the cold-boot logon trigger already gives you a
-fresh daemon — no manual restart needed, just log in before 8:30 ET.
-
-### Restart scripts — which one
-
-| Script | Rebuilds | Daemon (3001) | UI (3006) | Use when |
+| Code | Id | Strategy | TF | Notes |
 |---|---|---|---|---|
-| `ENSURE_RUNNING.bat` | No | Start **if down** | Start if down | Safety net / recover from a crash. Auto-fires on unlock + logon. |
-| `RESTART_DAEMON.bat` | Yes | **Force fresh** | Left alone | Daily restart, or after daemon code changes. |
-| `RESTART_ALL.bat` | Yes | **Force fresh** | **Restart** + open browser | Dashboard itself misbehaves, or you want a full clean slate. |
+| S1 | `orb_retest` | ORB Retest | 5m | Opening-range break + controlled retest; stop 1×ATR behind ORB level |
+| S2 | `vwap_pullback` | VWAP Pullback | 5m | VWAP touch + rejection wick + reclaim |
+| S3 | `rs_continuation` | RS Continuation | 5m | Micro range break + relative strength vs NIFTY |
+| S4 | `liquidity_sweep` | Liquidity Sweep | 5m | Stop-hunt sweep of OR level + reclaim (reversal) |
+| S5 | `ob_fvg_retest` | OB / FVG Retest | 5m | Order-block or fair-value-gap retest with rejection (reversal) |
+| S6 | `mss_breakout` | MSS Breakout | 5m | Market-structure shift + clear path; **reference-grade stop (1.2×ATR floor)** |
+| S7 | `s7_volume_surge` | Volume Surge | 5m | Institutional 2× volume spike on range break (scout — needs S8 partner) |
+| S8 | `ema20_bounce` | EMA20 Bounce | 5m | EMA slope + touch + reclaim + RVOL + VWAP-stacked |
+| S9 | `flag_break` | Flag Break | 5m | Compression flag + break (scout — needs S1 partner) |
+| S10 | `orb15m_retest` | 15m OB Retest | 15m | Unmitigated 15m order block (E1); R:R ≥ 2.0 |
+| S11 | `vwap15m_pullback` | 15m VWAP Pullback | 15m | 15m VWAP reclaim + RS; R:R ≥ 2.0 |
+| S12 | `ema20_bounce_15m` | 15m EMA20 Bounce | 15m | 15m EMA slope + touch + reclaim; R:R ≥ 2.0 |
+| S13 | `range_reversion` | Range Reversion | 5m | Range extreme + rejection wick (SIDEWAYS-optimised) |
+| S14 | `sniper_1m` | 1m Sniper | 1m | 1m OB inside a confirmed 15m/5m zone (E4) — tightest stop |
 
-`ENSURE_RUNNING` is start-*if-down* — it will **not** restart a daemon that's already
-running. For a guaranteed daily restart use `RESTART_DAEMON.bat`. Safe to run anytime; if
-nothing needs starting it exits in under a second.
+**Currently enabled** (live `disabledStrategies` excludes these): **S1, S4, S9, S10, S11, S12, S14**.
+**Disabled by default**: S2, S3, S5, S6, S7, S8, S13 — turned off pending NSE validation. See "Strategy
+selection" below.
+
+### Workflow stages
+
+```
+screened_universe → forming → confirmed → locked → trade_ready → ordered
+```
+
+- A **trade plan** (entry/stop/T1/T2) is built only at `trade_ready` (all hard gates pass, live+fresh
+  data, R:R OK, not earnings/manual/blackout).
+- **Provisional plan lines** are shown on the chart for `forming`/near-ready setups (display-only — see
+  Charting). They are **never executed**.
+
+### Strategy selection (regime router)
+
+`scheduler.ts` routes which strategies may fire by NIFTY regime:
+- **SIDEWAYS** → suppress breakouts (S1, S6, S7, S9).
+- **Trend (BULL/BEAR)** → disable mean-reversion (S13).
 
 ---
 
-## What happens when the daemon crashes
+## Direction Logic (Option C)
 
-> Transient network timeouts (a slow Alpaca/Yahoo fetch hitting `AbortSignal.timeout`) no
-> longer crash the daemon — they're caught and logged (`[scan] … failed (will retry next
-> cycle)`), and a process-level guard keeps any stray async rejection from killing it. A
-> hard crash now indicates a genuine fault worth reading in the window below.
+The row's *screener* bias:
 
-1. The cmd window titled **"Sutra Daemon [3001]"** stays open showing the full error and a
-   `[DAEMON CRASHED -- check error above]` line, then pauses.
-2. The dashboard **● Daemon** badge switches to **○ Daemon offline** (red).
-3. Scanning, trade monitoring, and EOD close all stop until restart.
-4. The UI stays up — you can still read trade history and the last known risk state.
-
-### Restart after a crash
-
-Close the crashed cmd window (or press any key to dismiss), then run:
-
-```bat
-ENSURE_RUNNING.bat
+```
+≥ 10:00 IST:  price > VWAP & 5m UP  → BULL ;  price < VWAP & 5m DOWN → BEAR ;  else gap fallback
+< 10:00 IST:  15m trend UP → BULL ;  15m trend DOWN → BEAR ;  else gap (±0.5%) fallback ; else NEUTRAL
 ```
 
-The bat kills any stale port holder, opens a fresh daemon window, and the UI reconnects
-automatically within a few seconds.
-
-On startup the daemon recovers automatically:
-- Loads risk state from `data/daemon-state.json`
-- Uses today's universe from file cache if already built; re-runs screener if not
-- Runs a full scan immediately
-- If it starts after 3:50 PM ET, fires the missed EOD close automatically
-
-### Restart the UI (rare — pm2 keeps it stable)
-
-```powershell
-pm2 restart sutra-ui
-pm2 logs sutra-ui --lines 30
-```
-
-### After daemon code changes
-
-```powershell
-cd daemon && npm run build && cd ..
-# Close the "Sutra Daemon [3001]" window, then:
-.\ENSURE_RUNNING.bat
-```
-
-### One-time migration from localStorage (existing installs only)
-
-If you have existing trades in the browser, export them before the first daemon start:
-
-1. Open the Sutra tab in Chrome, open DevTools Console, run:
-   ```js
-   copy(JSON.stringify({
-     trades:    JSON.parse(localStorage.getItem('sutra.protrade.paperTrades.v1') || '[]'),
-     riskState: JSON.parse(localStorage.getItem('sutra.riskManager.v2')           || '{}'),
-     settings:  JSON.parse(localStorage.getItem('sutra.riskSettings.v1')          || '{}'),
-     watchlist: JSON.parse(localStorage.getItem('sutra.dayWatchlist.v1')           || '{}'),
-   }, null, 2))
-   ```
-2. Paste the clipboard contents into `scripts/ls-export.json`
-3. Run: `npm run migrate`
+**Important:** when a strategy reaches a trade plan, the **row's headline direction follows that
+strategy's self-determined side**, not the screener bias (fixes "BULL badge on a short setup").
 
 ---
 
-## Environment Variables
+## Macro Regime (NIFTY + India VIX)
 
-Two env files — one for the React UI, one for the daemon.
+Regime is classified from NIFTY structure and **India VIX**, and scales size (not frequency):
 
-**`daemon/.env.daemon`** (required — daemon won't start without it):
-```text
-ALPACA_KEY=            # Alpaca paper API key ID
-ALPACA_SECRET=         # Alpaca paper API secret
-ALPACA_BASE_URL=https://paper-api.alpaca.markets
-DAEMON_PORT=3001
-DAEMON_AUTO_EXECUTE=false   # set to true to enable auto-trade firing
-```
-
-**`.env.local`** (optional — only needed if React components call Alpaca directly):
-```text
-VITE_ALPACA_KEY          # same paper key
-VITE_ALPACA_SECRET       # same paper secret
-VITE_ALPACA_DATA_URL     # optional — defaults to https://data.alpaca.markets
-VITE_APP_NAME            # display name (default: Sutra)
-```
-
-Get free paper trading API keys at [alpaca.markets](https://alpaca.markets).
-
----
-
-## ProTrade — Seven Intraday Strategies
-
-The core of Sutra is the ProTrade scanner, which evaluates a live universe of ~100 stocks against seven intraday strategies. Full scan runs every 60 seconds; a hot-set refresh (forming/confirmed/locked stocks only) runs every 20 seconds.
-
-| Code | Strategy | Signal Type | Hard Gates |
-|---|---|---|---|
-| S1 | ORB Retest | Opening range breakout + controlled retest | direction, confirmedBreak, retest |
-| S2 | VWAP Pullback | Trend continuation after VWAP reclaim | direction, touchedValue, reclaimed |
-| S3 | RS Continuation | Relative strength vs SPY on micro range break | direction, breakout, rvol ≥ 1.0 |
-| S4 | Liquidity Sweep | Stop-hunt reversal after OR sweep + reclaim | direction, swept, sweepWick, reclaimed, nearLevel |
-| S5 | OB/FVG Retest | Order block or fair value gap retest with rejection | direction, hasStructure, fvgQuality, entryConfirmation |
-| S6 | MSS Breakout | Market structure shift with clear path ahead | direction, mssOk, !zoneBlocked |
-| S7 | Volume Surge | Institutional 2× volume spike on 15m range break | direction, volSpike ≥ 2×, isBreakout |
-
-All other checks (VWAP context, RVOL, trend alignment, RSI, ADR room) are **informational** — visible in the checklist UI but never block execution.
-
-### Gate Philosophy
-
-Each strategy uses **2–3 hard gates maximum**. Hard gates represent the irreducible structural conditions for the setup. Everything else is context shown in the UI for human review.
-
-### Workflow Stages
-
-Stocks progress through: `raw_candidates → forming → confirmed → locked → trade_ready → ordered`
-
-Only `trade_ready` rows trigger the auto-execute gate.
-
----
-
-## Direction Logic
-
-Per-stock direction is derived from the **15m EMA trend** (institutional timeframe, stable across the session):
-
-```
-trend15m = UP   → direction = BULL
-trend15m = DOWN → direction = BEAR
-gap% > +0.5%    → direction = BULL  (early session fallback)
-gap% < -0.5%    → direction = BEAR  (early session fallback)
-otherwise       → direction = NEUTRAL (no trade)
-```
-
-The 15m EMA is computed on the last 80 bars of 15m candle data, which includes yesterday's close. Direction is available from the first scan of the day.
-
----
-
-## Macro Regime
-
-The scanner classifies a daily macro regime from SPY's closing price vs its 200-day EMA and VIX level. This scales position size — not trade frequency.
-
-| Regime | Condition | Size Multiplier |
-|---|---|---|
-| BULL | SPY > EMA200 and VIX < 20 | 1.0× |
-| SIDEWAYS | SPY > EMA200 but VIX 20–30 | 0.75× |
-| BEAR | SPY < EMA200 or VIX > 30 | 0.5× |
-
-SPY daily bars (250 bars) are fetched once per session and cached for 1 hour. VIX is attempted via Alpaca IEX but not available on the free feed — regime falls back gracefully to SPY-only classification.
-
----
-
-## Auto-Execute Gate
-
-**S1 and S7 fire instantly** when `trade_ready` is detected — no 1m bar confirmation. These are momentum/gap strategies where delay means missing the move.
-
-**S2–S6** wait for a 1-minute confirmation bar to close above (BULL) or below (BEAR) the structural entry level before placing a bracket order:
-
-```
-trade_ready detected (S2–S6)
-    ↓
-Enqueue symbol (level + direction recorded)
-    ↓  (next scan cycle)
-Fetch last closed 1m bar
-    ↓
-BULL: close > level AND volume ≥ 1.1× 20-bar avg → FIRE
-BEAR: close < level AND volume ≥ 1.1× 20-bar avg → FIRE
-    ↓
-Unconfirmed setups expire after 5 minutes
-```
-
----
-
-## Stop Loss Architecture
-
-Stops are computed per strategy using two constants:
-
-| Constant | Value | Purpose |
-|---|---|---|
-| `STOP_BUFFER_ATR` | 0.5× ATR20 | Structural buffer below/above anchor candle extreme |
-| `NOISE_FLOOR_ATR` | 0.75× ATR20 | Minimum stop distance from entry — no stop tighter than this |
-
-All strategies use `noiseFlooredStop()` to enforce the floor. Stops are always at least 0.75× the daily ATR away from entry.
-
-### Two-Phase Trailing Stop (T1/T2)
-
-| Event | Action |
+| Signal | Effect |
 |---|---|
-| T1 hit (1.5R) | Scale out 50%, move stop to breakeven (entry) |
-| Price pulls back to T1 zone (±0.3%) | Advance stop to T1 level |
-| T2 hit (2.5R or structural PDH/PDL) | Close remaining position |
-
-T2 is anchored to the previous day's high (BULL) or low (BEAR), capped at 3R and floored at 2.5R to prevent collapse.
+| India VIX > 30 | Stand down (no new entries) |
+| India VIX > 20 | Half size |
+| Regime size multiplier | Applied on top (BULL/SIDEWAYS/BEAR) |
 
 ---
 
-## Session Gates
+## Auto-Execute Gate & Safety
 
-| Window | Behaviour |
+Execution is **OFF by default** (`DAEMON_AUTO_EXECUTE=false`). When armed, the executor (`tryFireTrades`,
+every 5s during market hours) fires only on rows that pass **all** of:
+
+- `workflowStage === 'trade_ready'` **and** `primaryStrategy.canAutoReady` (manual-review setups never auto-fire)
+- `row.qualified` (basePass liquidity/ATR floor) **and** a non-null trade plan
+- Account funded (`accountBalance > 0`), within 09:30–15:15 IST
+- Not vetoed by: regime router, India VIX, drawdown kill, daily-loss limit, daily-profit protect,
+  group/strategy circuit breakers, sector concentration, portfolio beta, tide block, ADR exhaustion
+- Position caps: max concurrent total, per-strategy, per-direction (≤3), ≤3 re-entries per (symbol, strategy)
+
+**Kill switch:** set `DAEMON_AUTO_EXECUTE=false` and restart the daemon.
+
+### Kite bracket = entry + protective SL-M + resting TP-LIMIT
+
+Zerodha has no native bracket for regular orders, so a "bracket" is:
+1. **Entry** — MARKET, product `MIS` (intraday), whole shares.
+2. **Protective SL-M** at the structural stop — retried up to 3×; if it never lands, the entry is
+   **emergency-flattened** (never hold an unhedged position).
+3. **Resting TP-LIMIT** at T2 (non-fatal if it fails; the daemon also takes profit by market-close).
+
+OCO is enforced by the daemon: on any fill/close it cancels the sibling legs before squaring off, and
+reconciles internal trades against real broker fills (`getOrderMap`).
+
+---
+
+## Stop & Target Architecture
+
+- Stops are anchored to **structure** (ORB level / OB / sweep) with an ATR floor (`noiseFlooredStop`,
+  `enforceMinStop`). S6 is the reference: `min(swingLow, entry − 1.2×ATR)`.
+- **Two-phase trailing**: T1 (scale 50% + move stop to breakeven) → T2 (close remainder). 15m
+  strategies require **R:R ≥ 2.0**; 5m require **≥ 1.5** after costs.
+- **Cost-aware R:R gate**: a trade must clear R:R **net of NSE round-trip charges** (STT, brokerage,
+  GST, exchange, SEBI, stamp) — modelled in `nse.ts` (`nseRoundTripCost`).
+
+---
+
+## Session Gates (IST)
+
+| Window (IST) | Behaviour |
 |---|---|
-| Pre-market | All strategies locked |
-| 9:30–9:45 AM ET (blackout) | All locked except S7 on gap ≥ 3% days |
-| 9:45 AM–3:50 PM ET | Normal execution window |
-| After 3:50 PM ET | No new entries |
-| 3:57 PM ET | EOD flat-close — all open positions closed |
+| 09:00 | Pre-open universe rebuild; pre-market scanning (display only) |
+| 09:15–09:30 | Market open — **no new entries** (gap-violent) |
+| 09:30–15:15 | Normal execution window |
+| ≥ 15:15 | No new entries; EOD force-close begins (beats MIS auto square-off ~15:20) |
+| Holidays | `isNseHoliday()` from `nse.ts` calendar |
 
 ---
 
-## Risk Management
+## Risk Management (₹)
 
-- **Position sizing**: `(account × 2% risk) / |entry − stop|` shares, scaled by macro regime multiplier
-- **Daily loss limit**: configurable (default 8% of starting equity) — blocks new entries if breached
-- **Strategy circuit breaker**: 3 consecutive losses pause a strategy for 2 hours
-- **Max concurrent positions**: configurable (default 5)
-- **basePass filter**: price $1–$1500, ATR% 1.5–12%, dollar volume ≥ $3M — stocks failing this are not scanned
+- **Capital cap**: `CAPITAL_CAP_INR` hard-caps sizing capital (uses real Kite equity, capped).
+- **Deploy cap**: `DEPLOY_CAP_PCT` (default 0.70) — max combined open notional as a fraction of capital.
+- **Position sizing**: `(capital × riskPerTradePct) / |entry − stop|`, then tide/beta/regime/VIX/group
+  multipliers, then floored to whole shares.
+- **Daily loss limit**, **daily profit protect**, **drawdown kill** (real equity vs HWM), **per-strategy
+  & per-group circuit breakers**, **sector concentration**, **portfolio beta** caps.
+
+### Liquidity floor — NSE-native turnover (₹ crore)
+
+`basePass` requires price/ATR sanity plus a turnover floor. Turnover is computed in **₹ crore**
+(NSE-native), not US dollars:
+
+```
+turnoverCr = (last_price × todayVolume) / 1e7      // 1 crore = ₹10,000,000
+floor:  turnoverCr ≥ 5 cr     (junk/illiquid filter)
+tiers:  ≥ 50 cr "deep liquidity"  |  ≥ 10 cr "acceptable"
+```
+
+> Notes: this is **intraday turnover-so-far** (grows through the session) computed at **last price**
+> (not VWAP/average). Fine as a sanity floor on a large-cap universe (which clears it within minutes);
+> if you raise the floor to a real intraday standard (₹25–50 cr), account for the partial-day/last-price
+> effects. RVOL (`rvolEst`) already session-scales via `nseSessionVolumeFraction`.
 
 ---
 
-## WebSocket Bar Stream
+## Zerodha Kite Integration
 
-Stocks at `forming`, `confirmed`, `locked`, or `trade_ready` stage are subscribed to Alpaca's real-time WebSocket bar stream. On each 5m bar close:
+### Auth & daily token
 
-1. Bar cache for that symbol is evicted (snapshot cache preserved to avoid 429s)
-2. Strategy signals are re-evaluated immediately
-3. S7 (volume surge) is detected within seconds of the triggering bar closing
+- App credentials + daily access token in `daemon/.env.daemon` (`KITE_API_KEY`, `KITE_API_SECRET`,
+  `KITE_ACCESS_TOKEN`).
+- **Unattended login**: with `KITE_USER_ID` / `KITE_PASSWORD` / `KITE_TOTP_SECRET`, the daemon
+  auto-logs-in via TOTP at boot and re-validates every 20 min. Kite tokens expire daily (~07:30 IST);
+  the self-heal refreshes them **as long as the daemon is running and the network is up**.
+- The runtime token is cached to `data/kite-token.json` (gitignored).
+
+### ⚠️ Static IP whitelist (SEBI mandate)
+
+Live order placement requires a **whitelisted static IP** (SEBI/NSE algo mandate, effective 1 Apr 2026).
+If unset, every order is rejected with **"No IPs configured for this app."**
+
+- Whitelist is set at the **Kite developer account / Profile level**, *not* on the app page.
+- A **dynamic home IP will not hold** — it changes and breaks order placement. Use an **ISP static IP**,
+  a **VPS with a fixed IP** (recommended for unattended trading), or a static-IP proxy.
+
+### Config — `daemon/.env.daemon`
+
+```text
+KITE_API_KEY=
+KITE_API_SECRET=
+KITE_ACCESS_TOKEN=          # daily; or leave blank and use TOTP auto-login below
+KITE_USER_ID=
+KITE_PASSWORD=
+KITE_TOTP_SECRET=
+KITE_PRODUCT=MIS            # MIS (intraday) | CNC | NRML
+CAPITAL_CAP_INR=            # hard ₹ capital cap for sizing
+DEPLOY_CAP_PCT=0.70         # max combined open notional / capital
+DAEMON_AUTO_EXECUTE=false   # set true to arm live execution
+DAEMON_PORT=5003
+BROKER=kite                 # kite (NSE, default) | alpaca (legacy)
+```
+
+`daemon/.env.daemon` is **gitignored** — never commit live credentials.
 
 ---
 
 ## Daemon Architecture
 
-The daemon (`daemon/src/`) is a persistent Node.js process (direct node, visible cmd window) that runs independently of the browser:
-
 ```
 daemon/src/
-  index.ts            # entry point — loads state, starts HTTP + scheduler
-  httpServer.ts       # Express REST API (port 3001) + WebSocket push (/ws)
-  scanLoop.ts         # full scan (60s) + hot-set scan (20s)
-  scheduler.ts        # trade firing, EOD close, day-roll, circuit breakers
-  alpacaBarStream.ts  # Alpaca real-time WebSocket bar stream
-  engine/             # strategy evaluations, trade building, monitoring
-  riskManager.ts      # daily loss limit, circuit breakers, position sizing
-  stateStore.ts       # in-memory state with JSON persistence
+  index.ts             # entry — load state, start HTTP + scheduler, single-instance guard
+  httpServer.ts        # Express REST (5003) + WebSocket push (/ws)
+  scanLoop.ts          # full scan (60s) + hot-set scan (20s)
+  scheduler.ts         # executor (5s), monitor (10s), account sync (30s), EOD, day-roll, regime router
+  broker.ts            # broker seam — routes to kite/ or alpaca by BROKER
+  kite/                # kiteClient, kiteBroker, kiteLogin (TOTP), kiteTicker, kiteData, kiteEnv
+  engine/
+    proTradeScannerApi.ts  # universe fetch, scoring, strategy eval, snapshot build (qualified/turnoverCr)
+    strategyEngine.ts      # all 14 strategies, stage machine, provisional plans
+    buildPaperTrade.ts     # position sizing, tide/beta/flat-tide multipliers
+    monitorTrades.ts       # stop/target/trailing + soft exits
+  riskManager.ts       # sizing, loss limits, circuit breakers, HWM/drawdown
+  portfolioRisk.ts     # sector concentration, portfolio beta
+  tradeStore.ts        # trades.json + append-only ledger + anti-wipe backups (capped at 10)
+  stateStore.ts        # in-memory state + JSON persistence + day-roll
+  nse.ts               # IST clock, holidays, round-trip cost model, session volume curve
 ```
 
-The React UI connects via:
-- `GET /api/state` — initial snapshot on load
-- `ws://localhost:3001/ws` — push events (`snapshot_update`, `trade_opened`, `trade_closed`, etc.)
-- REST calls for manual actions (paper trade, close, watchlist, unpause)
-
-## Trade Persistence
-
-Trades are written to `data/trades.json` by the daemon on every state change. The file survives browser refreshes, browser close, and system reboots. localStorage is no longer used for trade storage.
+UI connects via `GET /api/state` (initial snapshot) + `ws://localhost:5003/ws` (push) + REST for manual
+actions. See `/api/health`, `/api/account`, `/api/risk/settings`, `/api/trades`, `/api/scan`.
 
 ---
 
-## Performance Analytics
+## Charting — Entry / Stop / Target lines
 
-The Performance tab tracks:
+`ProTradeCandlePreview.tsx` ("Candle Evidence") draws **Entry (blue), Stop (red), Target (green)** price
+lines:
+- **Solid + bright** for a real `trade_ready` plan (`row.tradePlan`).
+- **Dimmed + "(setup)"** for a `provisionalPlan` on a forming/near-ready setup — display-only, never
+  executed. Lets you watch a setup develop before it confirms.
 
-- **Win rate**: `Target` and `T1 Profit` are wins; `Stop` is a loss; `EOD` and `Manual` are excluded
-- **Equity curve**: cumulative daily P&L as an SVG line chart
-- **Daily P&L calendar**: heatmap grid by trading date
-- **Strategy breakdown**: per-strategy trade count, W/L, and P&L
-- **Intraday analytics**: profit factor, average R:R, average hold time, hour-of-day P&L
+---
+
+## Running Locally
+
+```powershell
+npm install
+
+# Daemon env — copy and fill in Kite credentials
+copy daemon\.env.daemon.example daemon\.env.daemon
+
+# Build the daemon
+npm run build:daemon
+
+# Start UI (pm2) + daemon
+npx pm2 start ecosystem.config.cjs       # or RESTART_DAEMON.bat for the daemon window
+```
+
+Open **`http://localhost:5004`** and confirm the daemon badge is green (`GET http://localhost:5003/api/health`).
+
+### Restart scripts
+
+| Script | Rebuilds | Daemon (5003) | UI (5004) | Use when |
+|---|---|---|---|---|
+| `ENSURE_RUNNING.bat` | No | Start if down | Start if down | Safety net / recover from a crash |
+| `RESTART_DAEMON.bat` | Yes | Force fresh | Left alone | Daily restart or after daemon code changes |
+| `RESTART_ALL.bat` | Yes | Force fresh | Restart + open browser | Full clean slate |
+
+After **daemon** code changes: `npm run build:daemon` → `RESTART_DAEMON.bat`.
+After **frontend** changes: Vite (dev) hot-reloads; if you see *"[vite:esbuild] service is no longer
+running"*, the esbuild child died — `npx pm2 restart kubera-ui` and hard-refresh.
+
+### Backtest (NSE)
+
+```powershell
+npm run bt:nse        # replays ~60d of Kite data through the real engine, net of NSE costs
+```
+Grades each strategy: `WR`, `PF`, `avgR`, `net₹`. PASS = n ≥ 10, WR ≥ 50%, PF ≥ 1.3. `BT_ONLY=<id>`
+isolates one strategy. (Shares the Kite API with a running daemon — heavy; prefer running it dedicated.)
+
+---
+
+## Recent Changes (June 2026, branch `india-nse`)
+
+- **Executor gating** — fire on `trade_ready && canAutoReady` (not just `qualified`); never trade on
+  stale/locked data, earnings, or manual-review setups.
+- **Kite buyingPower** — map from **net available margin** (was `available.cash`, which read ₹0 on a
+  funded account).
+- **tradeStore backups** — anti-wipe `.bak` snapshots capped at 10 (prune oldest) + gitignored.
+- **S1 ORB** — fires on a **flat NIFTY tide at half size** (no longer hard-vetoed); extended breakouts
+  (>1.5×ATR past the level, no retest) are marked **missed** and demoted.
+- **Row direction** — headline direction follows the strategy that made the plan (fixes BULL-on-short).
+- **Provisional plan lines** — chart shows where Entry/Stop/Target *would* be on forming setups
+  (display-only; execution still reads only the gated plan).
+- **NSE-native turnover** — `dollarVolM → turnoverCr` (₹ crore), ₹5cr floor, NSE liquidity tiers; UI
+  shows **"Turnover ₹X cr"** (was "$ Vol $XM").
+
+### Known operational gaps (to harden before unattended live trading)
+
+- **Market-live awareness** — the daemon scans on a frozen feed when the market is closed (holiday list
+  is incomplete). Recommended: stand down when `quote.last_trade_time` isn't today / volume is
+  market-wide zero, rather than trusting the hardcoded calendar.
+- **Token/reauth resilience** — overnight network blips can leave the token expired and the daemon
+  blind; needs louder alerting + more robust recovery (a clean restart fixes it).
+- **Process reliability** — run the daemon under pm2 (autorestart) + morning-start task, not a bare
+  `node` process, for unattended sessions.
 
 ---
 
@@ -340,60 +341,8 @@ The Performance tab tracks:
 
 | Outcome | Meaning |
 |---|---|
-| `Target` | T2 hit — full position closed at target |
-| `T1 Profit` | T1 hit — partial scale-out; remaining held to T2 or stopped at T1 |
-| `Stop` | Structural stop hit — counts as loss |
-| `Manual` | User closed from the monitor UI |
-| `EOD` | System flat-closed at 3:57 PM ET — not counted as win or loss |
-
----
-
-## Key Files
-
-```
-daemon/src/
-  index.ts                   # Daemon entry point
-  httpServer.ts              # REST API + WebSocket server (port 3001)
-  scanLoop.ts                # Full + hot-set scan orchestration
-  scheduler.ts               # Trade firing, EOD, day-roll, circuit breakers
-  alpacaBarStream.ts         # Alpaca real-time WebSocket bar stream (Node.js)
-  engine/
-    proTradeScannerApi.ts    # Universe fetch, strategy evaluation, snapshot build
-    buildTrade.ts            # Position sizing, tide/beta multipliers
-    monitorTrades.ts         # Stop/target monitoring, trailing stop logic
-  riskManager.ts             # Daily loss limit, circuit breakers
-  stateStore.ts              # In-memory state + JSON persistence
-
-src/
-  components/
-    ProTradeScanner.tsx      # Main scanner UI + paper trade monitor (display only)
-    Execution.tsx            # Orders tab (Alpaca positions, filled orders)
-    Configuration.tsx        # Performance analytics, risk settings
-  features/protrade/
-    strategyEngine.ts        # Strategy type definitions and signal types
-    proTradeScannerApi.ts    # Browser-side types (ProTradeRow, ProTradeSnapshot)
-    workflowTypes.ts         # WorkflowStage, StrategyId, TradePlan
-  features/marketRegime/
-    marketRegimeLogic.ts     # SPY EMA200 + VIX regime classification
-  lib/
-    daemonClient.ts          # REST client for daemon (http://localhost:3001)
-    daemonWs.ts              # WebSocket singleton for daemon push events
-    alpacaBroker.ts          # Paper bracket orders, positions, fills
-    alpacaClient.ts          # Market data: bars, snapshots, news
-    tradeStore.ts            # Date utilities (todayET, tradeDateET)
-
-ecosystem.config.cjs         # pm2 process config (daemon + UI)
-data/trades.json             # Trade history — written by daemon
-data/daemon-state.json       # Risk state, watchlist, circuit breakers — written by daemon
-```
-
----
-
-## API Rate Limit Notes (Alpaca IEX Free Tier)
-
-- All market data calls are made by the daemon — the browser makes zero API requests
-- Snapshot endpoint (`/v2/stocks/snapshots`) has the strictest rate limit
-- Snapshot TTL is 30s — hot-set (20s cycle) reuses cached data on alternate cycles
-- Bar cache is evicted on WebSocket bar close; snapshot cache is preserved
-- Multiple browser tabs are now safe — they all read from the daemon, no duplicate scan cycles
-- Stop any running `bt_run.mjs` or `diag_run.mjs` processes during live scanning (they hit the same rate limits)
+| `Target` | T2 hit — full close at target |
+| `T1 Profit` | T1 hit — partial scale-out; remainder to T2 or stopped at T1 |
+| `Stop` | Structural stop hit — loss |
+| `Manual` | Closed from the UI / rollback |
+| `EOD` | Force-closed at session end — not counted win/loss |

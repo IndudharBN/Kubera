@@ -97,6 +97,8 @@ app.get('/api/state', (_req, res) => {
     spyTrend5m: snapshot?.spyTrend5m ?? 'FLAT',
     spyTrend15m: snapshot?.spyTrend15m ?? 'FLAT',
     regime: snapshot?.regime ?? null,
+    marketLive: snapshot?.marketLive ?? false,
+    marketStatus: snapshot?.marketStatus ?? 'Daemon starting…',
     fetchedAt: snapshot?.fetchedAt ?? null,
     universeBuiltAt: getUniverseBuiltAt(),
     universeFallback: isUniverseFallback(),

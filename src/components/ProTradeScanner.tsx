@@ -492,7 +492,7 @@ function DetailPanel({ row }: { row: ProTradeRow }) {
               ['Gap', row.gapPct ? fmtPct(row.gapPct) : '--'],
               ['ATR20', fmtMoney(row.atr20)],
               ['ADR%', row.atrPct ? `${row.atrPct.toFixed(2)}%` : '--'],
-              ['$ Vol', row.dollarVolM ? `$${row.dollarVolM.toFixed(1)}M` : '--'],
+              ['Turnover', row.turnoverCr ? `₹${row.turnoverCr.toFixed(1)} cr` : '--'],
               ['RS vs NIFTY', row.rsVsBenchmark ? row.rsVsBenchmark.toFixed(3) : '--'],
               ['Prev D Hi', row.prevDayHigh > 0 ? fmtMoney(row.prevDayHigh) : '--'],
               ['Prev D Lo', row.prevDayLow > 0 ? fmtMoney(row.prevDayLow) : '--'],
@@ -1503,7 +1503,7 @@ export function ProTradeScannerScreen() {
   const applyDaemonState = React.useCallback((state: Record<string, unknown>) => {
     if (state['rows']) {
       const rows = state['rows'] as ProTradeRow[];
-      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', spyTrend5m: (state['spyTrend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', spyTrend15m: (state['spyTrend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'] } as ProTradeSnapshot);
+      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', spyTrend5m: (state['spyTrend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', spyTrend15m: (state['spyTrend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined } as ProTradeSnapshot);
     }
     if (state['universeFallback'] !== undefined) setUniverseFallback(state['universeFallback'] as boolean);
     if (state['trades']) setPaperTrades(state['trades'] as PaperTrade[]);
@@ -1568,10 +1568,10 @@ export function ProTradeScannerScreen() {
       }),
       daemonWs.on('disconnected', () => setDaemonOnline(false)),
       daemonWs.on('snapshot_update', (payload) => {
-        const p = payload as { rows: ProTradeRow[]; spyTrend5m: 'UP'|'DOWN'|'FLAT'; spyTrend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean };
+        const p = payload as { rows: ProTradeRow[]; spyTrend5m: 'UP'|'DOWN'|'FLAT'; spyTrend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean; marketLive?: boolean; marketStatus?: string };
         const qCount = p.qualifiedCount ?? p.rows.filter(r => r.qualified).length;
         if (p.universeFallback !== undefined) setUniverseFallback(p.universeFallback);
-        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', spyTrend5m: p.spyTrend5m, spyTrend15m: p.spyTrend15m, regime: p.regime });
+        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', spyTrend5m: p.spyTrend5m, spyTrend15m: p.spyTrend15m, regime: p.regime, marketLive: p.marketLive, marketStatus: p.marketStatus });
         setLoading(false);
         setError('');
       }),
@@ -2076,6 +2076,13 @@ export function ProTradeScannerScreen() {
             <span className={`px-3 py-1 rounded-full border text-xs font-semibold ${daemonOnline === true ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-400' : daemonOnline === false ? 'border-rose-500/30 bg-rose-500/8 text-rose-400' : 'border-yellow-500/30 bg-yellow-500/8 text-yellow-400'}`}>
               {daemonOnline === true ? '● Daemon' : daemonOnline === false ? '○ Daemon offline' : '◌ Connecting…'}
             </span>
+            {snapshot?.marketStatus && (
+              <span
+                title="Live NSE market state (from data freshness, not just the holiday calendar)"
+                className={`px-3 py-1 rounded-full border text-xs font-semibold ${snapshot.marketLive ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+                {snapshot.marketLive ? '● ' : '○ '}{snapshot.marketStatus}
+              </span>
+            )}
             {(() => {
               const mins = etMinutesNow();
               const cutoff = mins >= 15 * 60 + 50;
