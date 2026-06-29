@@ -209,23 +209,32 @@ export async function getOrderMap(): Promise<Record<string, OrderState>> {
   return map;
 }
 
-/** Square off one position with an opposite MARKET MIS order. */
-export async function closePosition(symbol: string): Promise<{ ok: boolean; error?: string }> {
+/** Square off one position with an opposite MARKET MIS order. Returns the REAL fill price so the
+ *  daemon can record true P&L (vs an estimated snapshot price). */
+export async function closePosition(symbol: string): Promise<{ ok: boolean; error?: string; avgPrice?: number; qty?: number }> {
   try {
     const pos = (await getPositions()).find((p) => p.symbol.toUpperCase() === symbol.toUpperCase());
     if (!pos) return { ok: false, error: `No open position for ${symbol}` };
-    await kc().placeOrder('regular', {
+    const qty = Math.abs(pos.qty);
+    const resp = (await kc().placeOrder('regular', {
       exchange: 'NSE',
       tradingsymbol: symbol.toUpperCase(),
       transaction_type: pos.side === 'long' ? 'SELL' : 'BUY',
-      quantity: Math.abs(pos.qty),
+      quantity: qty,
       product: kiteEnv.PRODUCT,
       order_type: 'MARKET',
       // @ts-expect-error — see entry order: market_protection is forwarded to the API; square-off must not be rejected.
       market_protection: -1,
       validity: 'DAY',
-    });
-    return { ok: true };
+    })) as unknown as RawOrderResp;
+    // Poll for the actual fill price (MARKET fills in ms; a few short retries cover the round-trip).
+    let avgPrice = 0;
+    for (let i = 0; i < 5 && avgPrice <= 0; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      const st = (await getOrderMap())[resp.order_id];
+      if (st && st.status === 'COMPLETE' && st.avgPrice > 0) avgPrice = st.avgPrice;
+    }
+    return { ok: true, avgPrice: avgPrice || undefined, qty };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }

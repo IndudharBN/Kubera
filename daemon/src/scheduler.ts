@@ -11,7 +11,7 @@ import { kiteEnv } from './kite/kiteEnv';
 import { ensureKiteLogin } from './kite/kiteLogin';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
-import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, closeAllPaperPositions, cancelPaperOrder, getOrderMap } from './broker';
+import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, cancelPaperOrder, getOrderMap } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
@@ -116,17 +116,24 @@ async function reconcileBrokerFills(trades: PaperTrade[]): Promise<PaperTrade[]>
   if (!orderMap) return trades;
   return trades.map((t) => {
     if (t.status !== 'Open') return t;
-    const tp = t.tpOrderId ? orderMap[t.tpOrderId] : undefined;
-    const sl = t.stopOrderId ? orderMap[t.stopOrderId] : undefined;
+    // Reconcile the ENTRY to its REAL broker fill price (recorded as the plan price at fire time).
+    // A market-with-protection entry can fill a few paise/rupees off the plan — using the real fill
+    // makes P&L (and the BE stop) match the broker instead of an estimate. Runs once (idempotent).
+    const entryO = t.alpacaOrderId ? orderMap[t.alpacaOrderId] : undefined;
+    const tt = (entryO && entryO.status === 'COMPLETE' && entryO.avgPrice > 0 && Math.abs(entryO.avgPrice - t.entry) > 0.001)
+      ? { ...t, entry: entryO.avgPrice }
+      : t;
+    const tp = tt.tpOrderId ? orderMap[tt.tpOrderId] : undefined;
+    const sl = tt.stopOrderId ? orderMap[tt.stopOrderId] : undefined;
     if (tp && tp.status === 'COMPLETE' && tp.avgPrice > 0) {
-      console.log(`[reconcile] ${t.symbol} TP-LIMIT filled @ ₹${tp.avgPrice} (broker)`);
-      return closePaperTrade(t, tp.avgPrice, 'Target');
+      console.log(`[reconcile] ${tt.symbol} TP-LIMIT filled @ ₹${tp.avgPrice} (broker)`);
+      return closePaperTrade(tt, tp.avgPrice, 'Target');
     }
     if (sl && sl.status === 'COMPLETE' && sl.avgPrice > 0) {
-      console.log(`[reconcile] ${t.symbol} SL-M filled @ ₹${sl.avgPrice} (broker)`);
-      return closePaperTrade(t, sl.avgPrice, t.t1HitAt ? 'T1 Profit' : 'Stop');
+      console.log(`[reconcile] ${tt.symbol} SL-M filled @ ₹${sl.avgPrice} (broker)`);
+      return closePaperTrade(tt, sl.avgPrice, tt.t1HitAt ? 'T1 Profit' : 'Stop');
     }
-    return t;
+    return tt;
   });
 }
 
@@ -145,9 +152,12 @@ async function monitorLoop(): Promise<void> {
     // (ratchet BE→T1→T2 + soft exits) on whatever is still open.
     const reconciled = (env.BROKER === 'kite' && env.AUTO_EXECUTE) ? await reconcileBrokerFills(trades) : trades;
     const reconClosed = reconciled.some((t, i) => t.status !== trades[i].status);
+    // reconcileBrokerFills also rewrites entry to the real fill (new object) — persist that even if
+    // nothing closed and the price-monitor reports no change, else the entry update is lost each cycle.
+    const reconChanged = reconciled.some((t, i) => t !== trades[i]);
 
     const { trades: updated, changed } = monitorPaperTrades(reconciled, snapshot.rows);
-    if (!changed && !reconClosed) return;
+    if (!changed && !reconClosed && !reconChanged) return;
 
     // Record closed trades to risk state
     for (let i = 0; i < trades.length; i++) {
@@ -364,43 +374,42 @@ async function eodClose(): Promise<void> {
   if (state.eodFiredDate === today) return;
 
   const trades = loadTrades();
-  const snapshot = getCurrentSnapshot();
-  const priceBySymbol = new Map(
-    (snapshot?.rows ?? []).map((r: { symbol: string; price: number }) => [r.symbol, r.price]),
-  );
+  const open = trades.filter((t) => t.status === 'Open');
 
-  let changed = false;
-  const updated = trades.map((t: { status: string; symbol: string; direction: string; entry: number; quantity: number; notional: number; stopOrderId?: string }) => {
-    if (t.status !== 'Open') return t;
-    const price = priceBySymbol.get(t.symbol) ?? t.entry;
-    const gross = t.direction === 'BEAR' ? (t.entry - price) * t.quantity : (price - t.entry) * t.quantity;
-    changed = true;
-    const closed = {
-      ...t,
-      status: 'Closed',
-      outcome: 'EOD',
-      exitPrice: Number(price.toFixed(2)),
-      pnl: Number(gross.toFixed(2)),
-      pnlPercent: Number((gross / t.notional * 100).toFixed(2)),
-      closedAt: new Date().toISOString(),
-    };
-    // eodClose does not go through emit(), so record the close in the ledger here.
-    appendLedger('trade_closed', closed);
-    return closed;
-  });
-
-  if (changed) {
-    saveTrades(updated as PaperTrade[]);
-    // OCO: cancel every resting SL-M AND TP-LIMIT BEFORE the market square-off so none can orphan.
-    const restingIds = trades
-      .filter((t) => t.status === 'Open')
-      .flatMap((t) => [t.stopOrderId, t.tpOrderId])
-      .filter((id): id is string => Boolean(id));
+  if (open.length) {
+    // OCO: cancel every resting SL-M AND TP-LIMIT BEFORE the square-off so none can orphan.
+    const restingIds = open.flatMap((t) => [t.stopOrderId, t.tpOrderId]).filter((id): id is string => Boolean(id));
     await Promise.allSettled(restingIds.map((id) => cancelPaperOrder(id)));
-    console.log('[eod] all open trades closed at market');
-    await closeAllPaperPositions().catch((err: Error) =>
-      console.warn('[eod] closeAll failed:', err.message),
-    );
+
+    // Square off per SYMBOL (net) and capture the REAL fill price, so EOD P&L reflects the actual
+    // broker exit — not an estimated snapshot price (which was over-stating the dashboard P&L).
+    const exitFill = new Map<string, number>();
+    for (const sym of [...new Set(open.map((t) => t.symbol))]) {
+      const r = await closePaperPosition(sym).catch((e: Error) => { console.warn(`[eod] close failed ${sym}:`, e.message); return {} as { avgPrice?: number }; });
+      if (r.avgPrice && r.avgPrice > 0) exitFill.set(sym, r.avgPrice);
+    }
+    console.log(`[eod] squared off ${exitFill.size}/${new Set(open.map((t) => t.symbol)).size} symbols at real fills`);
+
+    // Fall back to snapshot price only if a real fill couldn't be read.
+    const snapshot = getCurrentSnapshot();
+    const snapPrice = new Map((snapshot?.rows ?? []).map((r) => [r.symbol, r.price]));
+    const updated = trades.map((t) => {
+      if (t.status !== 'Open') return t;
+      const exit = exitFill.get(t.symbol) ?? snapPrice.get(t.symbol) ?? t.entry;
+      const gross = t.direction === 'BEAR' ? (t.entry - exit) * t.quantity : (exit - t.entry) * t.quantity;
+      const closed: PaperTrade = {
+        ...t,
+        status: 'Closed',
+        outcome: 'EOD',
+        exitPrice: Number(exit.toFixed(2)),
+        pnl: Number(gross.toFixed(2)),
+        pnlPercent: Number((gross / t.notional * 100).toFixed(2)),
+        closedAt: new Date().toISOString(),
+      };
+      appendLedger('trade_closed', closed); // eodClose bypasses emit(), so ledger the close here
+      return closed;
+    });
+    saveTrades(updated);
   }
 
   state.eodFiredDate = today;

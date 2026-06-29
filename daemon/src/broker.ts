@@ -41,9 +41,10 @@ export async function placePaperBracketOrder(params: BracketParams): Promise<{ i
   return { id: r.entryOrderId ?? '', stopId: r.stopOrderId, tpId: r.tpOrderId, error: r.error };
 }
 
-export async function closePaperPosition(symbol: string): Promise<void> {
-  if (!USE_KITE) return alpaca.closePaperPosition(symbol);
-  await kite.closePosition(symbol);
+export async function closePaperPosition(symbol: string): Promise<{ avgPrice?: number }> {
+  if (!USE_KITE) { await alpaca.closePaperPosition(symbol); return {}; }
+  const r = await kite.closePosition(symbol);
+  return { avgPrice: r.avgPrice };
 }
 
 export async function closeAllPaperPositions(): Promise<void> {
