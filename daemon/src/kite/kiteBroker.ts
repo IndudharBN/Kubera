@@ -68,6 +68,8 @@ export async function placeBracketOrder(params: {
       quantity: qty,
       product: kiteEnv.PRODUCT,
       order_type: 'MARKET',
+      // @ts-expect-error — market_protection IS forwarded to the API (SDK posts the whole params object); just absent from its input type. AUTO(-1) applies Kite's default band, required on API market orders.
+      market_protection: -1,
       validity: 'DAY',
     })) as unknown as RawOrderResp;
 
@@ -85,6 +87,8 @@ export async function placeBracketOrder(params: {
           product: kiteEnv.PRODUCT,
           order_type: 'SL-M',
           trigger_price: roundToTick(stop, tick),
+          // @ts-expect-error — SL-M becomes a market order on trigger; Kite requires market_protection on it too (forwarded by the SDK).
+          market_protection: -1,
           validity: 'DAY',
         })) as unknown as RawOrderResp;
         stopOrderId = stopResp.order_id;
@@ -217,6 +221,8 @@ export async function closePosition(symbol: string): Promise<{ ok: boolean; erro
       quantity: Math.abs(pos.qty),
       product: kiteEnv.PRODUCT,
       order_type: 'MARKET',
+      // @ts-expect-error — see entry order: market_protection is forwarded to the API; square-off must not be rejected.
+      market_protection: -1,
       validity: 'DAY',
     });
     return { ok: true };

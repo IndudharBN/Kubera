@@ -1,4 +1,5 @@
 import './env'; // must be first — loads .env.daemon before any other import reads process.env
+import './forceIpv4'; // force IPv4 egress so Kite sees the whitelisted static IPv4 (not dynamic IPv6)
 import net from 'net';
 import { env } from './env';
 import { loadState, saveState, getState } from './stateStore';
