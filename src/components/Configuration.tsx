@@ -63,10 +63,11 @@ function usePaperStats() {
       .catch(() => setTrades([]));
   }, []);
 
-  // Win = structural exit at target. Loss = structural exit at stop.
-  // EOD/Manual are operational closes — excluded from W/L so they don't distort the record.
-  const isWin = (t: PaperTradeRecord) => t.outcome === 'Target' || t.outcome === 'T1 Profit';
-  const isLoss = (t: PaperTradeRecord) => t.outcome === 'Stop';
+  // Win = structural target/T1, OR a green day-close (EOD flat that finished net-positive after costs).
+  // Loss = structural stop, OR a red EOD close. Break-even EOD (net 0) and Manual closes stay excluded.
+  const netOf = (t: PaperTradeRecord) => (t.pnl ?? 0) - (t.cost ?? 0);
+  const isWin = (t: PaperTradeRecord) => t.outcome === 'Target' || t.outcome === 'T1 Profit' || (t.outcome === 'EOD' && netOf(t) > 0);
+  const isLoss = (t: PaperTradeRecord) => t.outcome === 'Stop' || (t.outcome === 'EOD' && netOf(t) < 0);
 
   const closed = trades.filter((t) => t.status === 'Closed');
   const open = trades.filter((t) => t.status === 'Open');
