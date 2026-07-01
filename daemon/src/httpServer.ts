@@ -151,7 +151,7 @@ app.post('/api/risk/settings', (req, res) => {
     // Clamp the user-tunable fields to sane bounds.
     next.riskPerTradePct = Math.min(0.05, Math.max(0.005, next.riskPerTradePct));
     next.dailyLossLimitPct = Math.min(0.20, Math.max(0.01, next.dailyLossLimitPct));
-    next.maxPositions = Math.min(10, Math.max(1, Math.round(next.maxPositions)));
+    next.maxPositions = Math.min(15, Math.max(1, Math.round(next.maxPositions)));
     next.cbLossThreshold = Math.min(10, Math.max(3, Math.round(next.cbLossThreshold)));
     if (typeof next.sizeMultiplier === 'number') next.sizeMultiplier = Math.min(3, Math.max(0.5, next.sizeMultiplier));
     if (!Array.isArray(next.disabledStrategies)) next.disabledStrategies = getRiskSettings().disabledStrategies;

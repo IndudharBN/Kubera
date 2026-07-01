@@ -268,9 +268,9 @@ function tryFireTrades(): void {
     // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
     const stratCap = (stratId === 'liquidity_sweep' || stratId === 'vwap15m_pullback') ? 3 : 2;
     if (openNow.filter((t: { strategyId: string | null }) => t.strategyId === stratId).length >= stratCap) continue;
-    // Per-direction concurrent (net exposure correlation guard).
-    if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 3) {
-      console.log(`[executor] ${row.symbol} net-direction cap (≥3 ${sig.direction}) — correlated, skip`);
+    // Per-direction concurrent (net exposure correlation guard). 6/direction → up to 12 total.
+    if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 6) {
+      console.log(`[executor] ${row.symbol} net-direction cap (≥6 ${sig.direction}) — correlated, skip`);
       continue;
     }
 
