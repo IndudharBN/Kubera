@@ -8,6 +8,7 @@ import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
 import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings, initDailyBalance } from './riskManager';
 import { kiteEnv } from './kite/kiteEnv';
+import { getLtp as getKiteLtp } from './kite/kiteClient';
 import { ensureKiteLogin } from './kite/kiteLogin';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
@@ -79,6 +80,7 @@ let accountBalance = 0;   // capped at CAPITAL_CAP_INR — drives sizing (real K
 let accountEquity = 0;    // real broker equity — drives the drawdown kill
 let lastOrderAt = 0;            // order-rate throttle
 let lastStandDownLogAt = 0;     // throttle the "market not live" stand-down log
+let executorRunning = false;    // re-entrancy guard (executor awaits a live LTP check)
 
 async function syncAccount(): Promise<void> {
   try {
@@ -196,7 +198,17 @@ async function monitorLoop(): Promise<void> {
   }
 }
 
-function tryFireTrades(): void {
+async function tryFireTrades(): Promise<void> {
+  if (executorRunning) return;
+  executorRunning = true;
+  try {
+    await tryFireTradesInner();
+  } finally {
+    executorRunning = false;
+  }
+}
+
+async function tryFireTradesInner(): Promise<void> {
   if (!env.AUTO_EXECUTE) return;
   // No real capital → no sizing. Guards against firing on a phantom balance when the account is
   // unfunded or the margins sync hasn't landed yet (sizing would otherwise be meaningless/rejected).
@@ -259,6 +271,23 @@ function tryFireTrades(): void {
     }
 
     const openNow = trades.filter((t: { status: string }) => t.status === 'Open');
+    // Post-stop cooldown: after a Stop (or emergency Manual) close of this (symbol,strategy), block
+    // re-entry for 15 min AND until a scan completed AFTER the close. Without this, the executor
+    // re-fired 3s after a stop-out on the stale pre-stop snapshot (AMBUJACEM 2026-07-02: 3 entries
+    // in 26s into a rising stock, the last filling BEYOND its own stop → naked → emergency flat).
+    const lastStopAt = trades
+      .filter((t) => t.symbol === row.symbol && t.strategyId === stratId && t.status === 'Closed'
+        && (t.outcome === 'Stop' || t.outcome === 'Manual') && t.closedAt)
+      .map((t) => new Date(t.closedAt as string).getTime())
+      .sort((a, b) => b - a)[0];
+    if (lastStopAt) {
+      if (Date.now() - lastStopAt < 15 * 60 * 1000) {
+        continue; // cooling down — no log spam (hits every 5s tick)
+      }
+      if (new Date(snapshot.fetchedAt).getTime() <= lastStopAt) {
+        continue; // snapshot predates the stop-out — wait for a fresh scan to re-confirm the setup
+      }
+    }
     // ≤3 entries per (strategy, symbol) per day — matches the backtest's re-entry cap.
     if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) continue;
     // Never two of the SAME strategy on the SAME symbol concurrently (no doubling one setup).
@@ -319,6 +348,28 @@ function tryFireTrades(): void {
       continue;
     }
 
+    // Entry-drift guard: the plan's entry/stop were computed at scan time (up to 60s ago); the fill
+    // will be at the LIVE price. If price has drifted so far that the geometry is broken — more than
+    // half the planned risk away from entry, or with less than 60% of the planned stop room left —
+    // skip. Kills stale-plan fires (AMBUJACEM: fill 26 paise from the stop; next fill BEYOND it).
+    if (env.BROKER === 'kite') {
+      let ltp: number | undefined;
+      try {
+        ltp = (await getKiteLtp([newTrade.symbol]))[newTrade.symbol];
+      } catch (e) {
+        console.warn(`[executor] ${newTrade.symbol} LTP check failed (${(e as Error).message}) — skipping this tick`);
+        continue; // fail closed: better to miss one 5s tick than fire blind on a stale plan
+      }
+      if (!ltp || ltp <= 0) continue;
+      const plannedRisk = Math.abs(newTrade.entry - newTrade.stop);
+      const drift = Math.abs(ltp - newTrade.entry);
+      const remainingRisk = newTrade.direction === 'BULL' ? ltp - newTrade.stop : newTrade.stop - ltp;
+      if (drift > plannedRisk * 0.5 || remainingRisk < plannedRisk * 0.6) {
+        console.log(`[executor] ${newTrade.symbol} entry drift — plan=${newTrade.entry} ltp=${ltp} stop=${newTrade.stop} (drift ₹${drift.toFixed(2)}, room ${(remainingRisk / plannedRisk * 100).toFixed(0)}% of plan) — skip`);
+        continue;
+      }
+    }
+
     trades.push(newTrade);
     tradesFired = true;
     lastOrderAt = Date.now(); // throttle spacing for the next entry
@@ -345,10 +396,18 @@ function tryFireTrades(): void {
           console.error(`[broker] ${newTrade.symbol} UNHEDGED — SL-M failed; emergency-flattening the entry`);
           emit('alert', { level: 'error', symbol: newTrade.symbol, message: 'SL-M failed — emergency flat' });
           if (order.tpId) await cancelPaperOrder(order.tpId).catch(() => {});
-          await closePaperPosition(newTrade.symbol).catch((e: Error) => console.warn(`[broker] emergency close failed ${newTrade.symbol}:`, e.message));
+          // Record the flatten at REAL fills (entry avg + square-off avg), not the plan price — the
+          // old newTrade.entry/entry bookkeeping logged pnl=0 on a leg that really lost money.
+          const closeRes = await closePaperPosition(newTrade.symbol).catch((e: Error) => {
+            console.warn(`[broker] emergency close failed ${newTrade.symbol}:`, e.message);
+            return {} as { avgPrice?: number };
+          });
+          const om = await getOrderMap().catch(() => null);
+          const realEntry = (om && order.id && om[order.id]?.avgPrice > 0) ? om[order.id].avgPrice : newTrade.entry;
+          const exitPx = (closeRes.avgPrice && closeRes.avgPrice > 0) ? closeRes.avgPrice : realEntry;
           const ts2 = loadTrades();
           const j = ts2.findIndex((t: { id: string }) => t.id === newTrade.id);
-          if (j !== -1) { ts2[j] = closePaperTrade(ts2[j], newTrade.entry, 'Manual'); saveTrades(ts2); emit('trade_closed', ts2[j]); }
+          if (j !== -1) { ts2[j] = closePaperTrade({ ...ts2[j], entry: realEntry }, exitPx, 'Manual'); saveTrades(ts2); emit('trade_closed', ts2[j]); }
         }
       }).catch((err: Error) => {
         // Entry rejected at the broker (margin / circuit / ASM / connectivity) → roll back the
@@ -491,7 +550,7 @@ export function startScheduler(): void {
   // Executor: try fire trades every 5s
   setInterval(() => {
     if (!isMarketHours()) return;
-    tryFireTrades();
+    tryFireTrades().catch((err) => console.warn('[executor] error:', (err as Error).message));
   }, 5_000);
 
   // EOD close check every 30s
