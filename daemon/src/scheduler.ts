@@ -29,6 +29,31 @@ function etMinutes(): number {
   return h * 60 + m;
 }
 
+/** IST calendar date (YYYY-MM-DD) of an ISO timestamp. */
+function istDayOf(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+/**
+ * Trend veto input: has the stock printed a NEW session extreme against the stopped side since the
+ * stop-out? wasBear=true (a stopped short) → compare post-stop session HIGH vs pre-stop session
+ * high; a fresh high means the up-move is still running — do not re-short it. Mirror for longs.
+ */
+function newExtremeSinceStop(
+  five: Array<{ time: string; high: number; low: number }>,
+  stopAtMs: number,
+  wasBear: boolean,
+): boolean {
+  const today = toETDate();
+  const dayBars = five.filter((c) => istDayOf(c.time) === today);
+  const before = dayBars.filter((c) => new Date(c.time).getTime() <= stopAtMs);
+  const after = dayBars.filter((c) => new Date(c.time).getTime() > stopAtMs);
+  if (!before.length || !after.length) return false;
+  return wasBear
+    ? Math.max(...after.map((c) => c.high)) > Math.max(...before.map((c) => c.high))
+    : Math.min(...after.map((c) => c.low)) < Math.min(...before.map((c) => c.low));
+}
+
 // Regime router: which strategies may fire in the current NIFTY regime.
 // Trend (BULL/BEAR) → disable mean-reversion (S13). Range (SIDEWAYS) → suppress
 // breakouts (S1 ORB, S6 MSS, S9 Flag, S7 Volume-surge). Everything else allowed.
@@ -287,6 +312,28 @@ async function tryFireTradesInner(): Promise<void> {
       if (new Date(snapshot.fetchedAt).getTime() <= lastStopAt) {
         continue; // snapshot predates the stop-out — wait for a fresh scan to re-confirm the setup
       }
+    }
+    // Two-strikes rule: 2 failed exits (Stop, or a red Manual/flatten) on this (symbol,strategy)
+    // today = done with it for the day. The ≤3-ENTRY cap still allowed a third full-1R stop on the
+    // same failing idea (INDUSINDBK 2026-07-03: 3 S4 shorts, all stopped, −₹222).
+    const strikesToday = trades.filter((t) =>
+      t.symbol === row.symbol && t.strategyId === stratId && t.status === 'Closed' && t.closedAt
+      && istDayOf(t.closedAt) === toETDate()
+      && (t.outcome === 'Stop' || (t.outcome === 'Manual' && ((t.pnl ?? 0) - (t.cost ?? 0)) <= 0))).length;
+    if (strikesToday >= 2) continue; // two strikes — no third attempt today
+    // Trend veto: after a stopped trade on this symbol IN THIS DIRECTION, don't re-enter if the
+    // stock has since pushed to a NEW session extreme against us (new high after a stopped short /
+    // new low after a stopped long). Re-fading a name in a persistent one-way move is the two-day
+    // loss signature (AMBUJACEM, INDUSINDBK, ADANIENT — all counter-trend re-entries into strength).
+    const lastSameDirStopAt = trades
+      .filter((t) => t.symbol === row.symbol && t.direction === sig.direction && t.status === 'Closed' && t.closedAt
+        && istDayOf(t.closedAt) === toETDate()
+        && (t.outcome === 'Stop' || (t.outcome === 'Manual' && ((t.pnl ?? 0) - (t.cost ?? 0)) <= 0)))
+      .map((t) => new Date(t.closedAt as string).getTime())
+      .sort((a, b) => b - a)[0];
+    if (lastSameDirStopAt && newExtremeSinceStop(row.candles?.five ?? [], lastSameDirStopAt, sig.direction === 'BEAR')) {
+      console.log(`[executor] ${row.symbol} trend veto — new session ${sig.direction === 'BEAR' ? 'high' : 'low'} since the ${sig.direction} stop-out, not re-fading`);
+      continue;
     }
     // ≤3 entries per (strategy, symbol) per day — matches the backtest's re-entry cap.
     if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) continue;
