@@ -91,13 +91,14 @@ export function buildPaperTrade(
   if (quantity <= 0) return null;
   const filledNotional = Math.round(quantity * plan.entry * 100) / 100;
 
-  // Cost-aware R:R gate: require ≥1.5R *after* NSE intraday charges (STT/brokerage/GST/…).
-  // A 1.5R gross trade can be ~1.2R net on small ₹ tickets — those silently bleed the edge.
+  // Cost-aware R:R gate: require ≥1.8R *after* NSE intraday charges (STT/brokerage/GST/…).
+  // Raised from 1.5 — 3 live days showed the marginal tickets (net gross ≈ charges) were pure churn:
+  // ~⅓ of trades grossed <₹25 while costing ₹7–8 each. A higher net hurdle kills them at sizing time.
   const grossReward = Math.abs(plan.target2 - plan.entry) * quantity;
   const grossRisk = Math.abs(plan.entry - plan.stop) * quantity;
   const cost = nseRoundTripCost(plan.entry, quantity);
   const netRR = (grossReward - cost) / (grossRisk + cost);
-  if (!Number.isFinite(netRR) || netRR < 1.5) return null;
+  if (!Number.isFinite(netRR) || netRR < 1.8) return null;
 
   return {
     id: `paper-${row.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

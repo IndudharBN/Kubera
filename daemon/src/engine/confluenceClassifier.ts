@@ -7,14 +7,16 @@ export interface GroupClassification {
 }
 
 // Notional cap per group as fraction of account (used in riskManager sizing).
+// Sized for a fewer-but-bigger book: the executor now blocks UNCLASSIFIED and throttles flat-tape
+// days to 6 slots, so surviving (higher-conviction) trades carry more capital each.
 export const GROUP_NOTIONAL_CAP: Record<SignalGroup, number> = {
-  GOLD:         0.15,
-  BLUE:         0.10,
-  TREND:        0.10,
-  FVG:          0.10,
-  BREAKOUT:     0.12,
-  PULLBACK:     0.12,
-  MOMENTUM:     0.08,
+  GOLD:         0.18,
+  BLUE:         0.14,
+  TREND:        0.14,
+  FVG:          0.14,
+  BREAKOUT:     0.14,
+  PULLBACK:     0.14,
+  MOMENTUM:     0.10,
   SIDEWAYS:     0.06,
   UNCLASSIFIED: 0.03,
 };

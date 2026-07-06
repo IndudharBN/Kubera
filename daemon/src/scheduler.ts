@@ -286,6 +286,9 @@ async function tryFireTradesInner(): Promise<void> {
     if (!sig) continue;
     // Respect the strategy's own auto-ready flag — manual-review setups never auto-fire.
     if (!sig.canAutoReady) { console.log(`[executor] ${row.symbol} manual-review only — no auto-fire`); continue; }
+    // Conviction floor: UNCLASSIFIED (no confluence group, 3%-cap bucket) never auto-fires — over
+    // 3 live days these were the churn tickets whose gross barely covered charges.
+    if ((sig.signalGroup ?? 'UNCLASSIFIED') === 'UNCLASSIFIED') continue;
     const stratId = sig.strategyId ?? 'unknown';
 
     // Regime router: trend (BULL/BEAR) disables mean-reversion (S13);
@@ -339,8 +342,13 @@ async function tryFireTradesInner(): Promise<void> {
     if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) continue;
     // Never two of the SAME strategy on the SAME symbol concurrently (no doubling one setup).
     if (openNow.some((t: { strategyId: string | null; symbol: string }) => t.strategyId === stratId && t.symbol === row.symbol)) continue;
-    // Max concurrent total.
-    if (openNow.length >= getRiskSettings().maxPositions) break;
+    // Max concurrent total — throttled to 6 when the NIFTY tide is dead on BOTH timeframes.
+    // Flat tape = targets rarely resolve (winners drift to EOD at 0.2–0.6R while losers pay full 1R),
+    // so run fewer, higher-conviction slots; rows are confidence-sorted, so the best setups fill them.
+    // Full capacity only when the index has direction and 2R targets are actually reachable.
+    const flatTape = snapshot.spyTrend5m === 'FLAT' && snapshot.spyTrend15m === 'FLAT';
+    const effectiveMax = flatTape ? Math.min(6, getRiskSettings().maxPositions) : getRiskSettings().maxPositions;
+    if (openNow.length >= effectiveMax) break;
     // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
     const stratCap = (stratId === 'liquidity_sweep' || stratId === 'vwap15m_pullback') ? 3 : 2;
     if (openNow.filter((t: { strategyId: string | null }) => t.strategyId === stratId).length >= stratCap) continue;
