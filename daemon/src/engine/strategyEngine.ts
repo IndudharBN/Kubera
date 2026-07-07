@@ -705,10 +705,18 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
   const sweepWickOk = sweepCandle ? (() => {
     const cRange = sweepCandle.high - sweepCandle.low;
     if (cRange < 1e-8) return false;
+    // 50% (was 35%): a genuine stop-run rejection closes most of the way back through the level.
+    // 35% let ordinary trend-consolidation bars qualify — live S4 kept "fading" breakouts (24% WR).
     return dir === 'BULL'
-      ? (sweepCandle.close - sweepCandle.low) / cRange >= 0.35 // 35% wick — genuine stop-run rejection
-      : (sweepCandle.high - sweepCandle.close) / cRange >= 0.35;
+      ? (sweepCandle.close - sweepCandle.low) / cRange >= 0.5
+      : (sweepCandle.high - sweepCandle.close) / cRange >= 0.5;
   })() : false;
+
+  // HTF opposition veto: never fade the 15m trend. S4 is exempt from the tide block (reversals
+  // legitimately fight the 5m), but live results split hard on the 15m: shorts against a rising
+  // 15m went 0/8 (−₹472). A sweep against a flat/aligned 15m is a stop-hunt; against a trending
+  // 15m it's usually just the next leg.
+  const htfOk = selfDir !== null && (selfDir === 'BULL' ? input.trend15m !== 'DOWN' : input.trend15m !== 'UP');
 
   // Reclaim candle conviction: the 5m bar that closes back through the swept level must show
   // at least 0.8× its own 5-bar average volume. A thin reclaim = price drifting back in a
@@ -720,7 +728,9 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
   const avg5Vol = prior3Vol.length >= 2
     ? prior3Vol.reduce((s, c) => s + c.volume, 0) / prior3Vol.length
     : 0;
-  const reclaimVolOk = avg5Vol > 0 && trigger != null && trigger.volume >= avg5Vol * 0.8;
+  // 1.3× (was 0.8×): a real stop-run reversal prints ABOVE-average volume on the reclaim bar.
+  // 0.8× accepted below-average drift bars as "conviction" — a major source of S4's live churn.
+  const reclaimVolOk = avg5Vol > 0 && trigger != null && trigger.volume >= avg5Vol * 1.3;
 
   const selfInput = selfDir
     ? {
@@ -730,7 +740,7 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
         trendAligned: selfDir === 'BULL' ? input.trend5m === 'UP' : input.trend5m === 'DOWN',
       }
     : input;
-  const tradePlan = swept && reclaimed && nearLevel && sweepWickOk && reclaimVolOk
+  const tradePlan = swept && reclaimed && nearLevel && sweepWickOk && reclaimVolOk && htfOk
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
     : null;
   const sweepDetail = sweptLevel !== null
@@ -748,8 +758,11 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
     reclaimed ? pass('Level reclaimed', `Close back ${dir === 'BULL' ? 'above' : 'below'} ${sweptLevel ? round(sweptLevel, 2) : '--'}`) : fail('Level reclaimed', 'Waiting for close back through swept level'),
     nearLevel ? pass('Entry proximity', 'Price within 1.5×ATR of level ✓') : fail('Entry proximity', 'Price too far from swept level — do not chase'),
     reclaimVolOk
-      ? pass('Reclaim conviction', `Reclaim bar vol ${round(trigger?.volume ?? 0, 0)} vs 3-bar avg ${round(avg5Vol, 0)} (${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}×) — reversal has participation`)
-      : fail('Reclaim conviction', avg5Vol > 0 ? `Reclaim bar vol ${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× prior avg — thin reversal, likely drift not real stop-run` : 'Insufficient candle data for volume check'),
+      ? pass('Reclaim conviction', `Reclaim bar vol ${round(trigger?.volume ?? 0, 0)} vs 3-bar avg ${round(avg5Vol, 0)} (${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× ≥ 1.3×) — reversal has participation`)
+      : fail('Reclaim conviction', avg5Vol > 0 ? `Reclaim bar vol ${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× prior avg (need ≥1.3×) — thin reversal, likely drift not real stop-run` : 'Insufficient candle data for volume check'),
+    htfOk
+      ? pass('15m trend not opposed', `15m ${input.trend15m} — sweep is a stop-hunt, not the next trend leg`)
+      : fail('15m trend not opposed', `15m ${input.trend15m} against a ${dir} sweep — fading a trending 15m is the losing pattern (0/8 live)`),
     ema1mCheck(input),
     spySessionCheck(selfInput),
   ];

@@ -350,7 +350,8 @@ async function tryFireTradesInner(): Promise<void> {
     const effectiveMax = flatTape ? Math.min(6, getRiskSettings().maxPositions) : getRiskSettings().maxPositions;
     if (openNow.length >= effectiveMax) break;
     // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
-    const stratCap = (stratId === 'liquidity_sweep' || stratId === 'vwap15m_pullback') ? 3 : 2;
+    // liquidity_sweep demoted 3→2: live record 5W/16L (24% WR, −₹489) doesn't earn triple concurrency.
+    const stratCap = stratId === 'vwap15m_pullback' ? 3 : 2;
     if (openNow.filter((t: { strategyId: string | null }) => t.strategyId === stratId).length >= stratCap) continue;
     // Per-direction concurrent (net exposure correlation guard). 6/direction → up to 12 total.
     if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 6) {
