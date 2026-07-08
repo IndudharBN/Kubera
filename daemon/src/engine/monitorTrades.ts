@@ -91,6 +91,24 @@ export function monitorPaperTrades(
         return { ...trade, trailingStop: target1 };
       }
     }
+    // Late-session profit lock: after 14:15 IST, trail the stop to protect ≥50% of open profit so
+    // the 15:15 EOD force-close stops flattening winners at drift prices (50 of the first 85 live
+    // closes were EOD, winners averaging just +0.24R). Only ever tightens, never loosens.
+    {
+      const istNow = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+      const [ih, im] = istNow.split(':').map(Number);
+      if (ih * 60 + im >= 14 * 60 + 15) {
+        const openProfit = trade.direction === 'BEAR' ? trade.entry - current : current - trade.entry;
+        if (openProfit > 0) {
+          const lock = trade.direction === 'BEAR' ? trade.entry - openProfit * 0.5 : trade.entry + openProfit * 0.5;
+          const improves = trade.direction === 'BEAR' ? lock < trailingStop : lock > trailingStop;
+          if (improves) {
+            changed = true;
+            return { ...trade, trailingStop: Number(lock.toFixed(2)) };
+          }
+        }
+      }
+    }
     if (hitStop) {
       changed = true;
       const exitPrice = trade.t1HitAt

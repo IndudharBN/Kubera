@@ -9,7 +9,9 @@ import { istDateOf } from './tzfast';
 
 const MIN_RR = 1.5;
 const PREFERRED_RR = 2.5;
-const T1_RR = 1.5;           // scale out 50% at T1, SL → entry (BE), then → T1 on pullback confirm
+const T1_RR = 1.0;           // scale out 50% at T1, SL → entry (BE). 1.0R (was 1.5): in 85 live trades
+                             // the best winner peaked at 0.92R realized — 1.5R was never touched. A
+                             // reachable first rung banks half and arms the BE ratchet for real.
 const STOP_BUFFER_ATR = 0.5; // breathing room beyond anchor extreme
 const MIN_STOP_ATR = 0.5;    // stop must be ≥ 50% of daily ATR from entry
 const MIN_STOP_PCT = 0.005;  // stop must be ≥ 0.5% of price — catches atr20=0 (no daily data)
@@ -71,6 +73,17 @@ function planFromLevelsT1T2(
 ): TradePlan | null {
   const risk = input.direction === 'BULL' ? entry - stop : stop - entry;
   if (!Number.isFinite(risk) || risk <= 0) return null;
+  // Adaptive T2: cap the runner target by the stock's REMAINING daily range (ATR20 minus range
+  // already used today). A fixed 2.5R on a name that has spent its ATR is fiction — 0 of 85 live
+  // trades ever reached T2. Honest targets also make the net-R:R gate meaningful: exhausted names
+  // fail the gate and don't trade. Floor at 1.2R so the ladder stays above T1 (1.0R).
+  const todayIst = istDateOf(new Date().toISOString());
+  const dayBars = (input.candles.five ?? []).filter((c) => istDateOf(c.time) === todayIst);
+  if (dayBars.length && input.atr20 > 0) {
+    const used = Math.max(...dayBars.map((c) => c.high)) - Math.min(...dayBars.map((c) => c.low));
+    const maxDist = Math.max(input.atr20 - used, risk * 1.2);
+    t2 = input.direction === 'BULL' ? Math.min(t2, entry + maxDist) : Math.max(t2, entry - maxDist);
+  }
   const rrT2 = rr(entry, stop, t2, input.direction);
   if (!Number.isFinite(rrT2) || rrT2 < MIN_RR) return null;
   return {
@@ -187,9 +200,10 @@ function findNearestSwingTarget(
 function structuralT1(candles: Candle[], dir: 'BULL' | 'BEAR', entry: number, risk: number): number {
   const fallback = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
   if (risk <= 0) return fallback;
+  // T1 band [1.0R, 1.5R] (cap was 2.0R): the first scale-out must be reachable intraday.
   const floor1R = dir === 'BULL' ? entry + risk * 1.0 : entry - risk * 1.0;
-  const cap2R   = dir === 'BULL' ? entry + risk * 2.0 : entry - risk * 2.0;
-  const pivot = findNearestSwingTarget(candles.slice(-80), dir, floor1R, cap2R, 2);
+  const cap15R  = dir === 'BULL' ? entry + risk * 1.5 : entry - risk * 1.5;
+  const pivot = findNearestSwingTarget(candles.slice(-80), dir, floor1R, cap15R, 2);
   return pivot !== null ? pivot : fallback;
 }
 
