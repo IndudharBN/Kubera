@@ -353,7 +353,8 @@ async function tryFireTradesInner(): Promise<void> {
     // liquidity_sweep demoted 3→2: live record 5W/16L (24% WR, −₹489) doesn't earn triple concurrency.
     // ema20_bounce_15m promoted 2→3: best live net earner (+₹186/30 trades) and often the only
     // strategy producing on flat days — parity with vwap15m_pullback.
-    const stratCap = (stratId === 'vwap15m_pullback' || stratId === 'ema20_bounce_15m') ? 3 : 2;
+    // orb15m_retest promoted 2→3: 2 straight T2 hits under the adaptive ladder (+₹594 since Jul 7).
+    const stratCap = (stratId === 'vwap15m_pullback' || stratId === 'ema20_bounce_15m' || stratId === 'orb15m_retest') ? 3 : 2;
     if (openNow.filter((t: { strategyId: string | null }) => t.strategyId === stratId).length >= stratCap) continue;
     // Per-direction concurrent (net exposure correlation guard). 6/direction → up to 12 total.
     if (openNow.filter((t: { direction: string }) => t.direction === sig.direction).length >= 6) {

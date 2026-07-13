@@ -742,9 +742,10 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
   const avg5Vol = prior3Vol.length >= 2
     ? prior3Vol.reduce((s, c) => s + c.volume, 0) / prior3Vol.length
     : 0;
-  // 1.3× (was 0.8×): a real stop-run reversal prints ABOVE-average volume on the reclaim bar.
-  // 0.8× accepted below-average drift bars as "conviction" — a major source of S4's live churn.
-  const reclaimVolOk = avg5Vol > 0 && trigger != null && trigger.volume >= avg5Vol * 1.3;
+  // 1.15× (was 1.3×, originally 0.8×): still requires ABOVE-average reclaim volume — a real reversal
+  // prints participation — but 1.3× proved over-tight (near-zero fires in 5 sessions). The 15m
+  // opposition veto stays untouched; this is the marginal gate of the three.
+  const reclaimVolOk = avg5Vol > 0 && trigger != null && trigger.volume >= avg5Vol * 1.15;
 
   const selfInput = selfDir
     ? {
@@ -772,8 +773,8 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
     reclaimed ? pass('Level reclaimed', `Close back ${dir === 'BULL' ? 'above' : 'below'} ${sweptLevel ? round(sweptLevel, 2) : '--'}`) : fail('Level reclaimed', 'Waiting for close back through swept level'),
     nearLevel ? pass('Entry proximity', 'Price within 1.5×ATR of level ✓') : fail('Entry proximity', 'Price too far from swept level — do not chase'),
     reclaimVolOk
-      ? pass('Reclaim conviction', `Reclaim bar vol ${round(trigger?.volume ?? 0, 0)} vs 3-bar avg ${round(avg5Vol, 0)} (${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× ≥ 1.3×) — reversal has participation`)
-      : fail('Reclaim conviction', avg5Vol > 0 ? `Reclaim bar vol ${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× prior avg (need ≥1.3×) — thin reversal, likely drift not real stop-run` : 'Insufficient candle data for volume check'),
+      ? pass('Reclaim conviction', `Reclaim bar vol ${round(trigger?.volume ?? 0, 0)} vs 3-bar avg ${round(avg5Vol, 0)} (${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× ≥ 1.15×) — reversal has participation`)
+      : fail('Reclaim conviction', avg5Vol > 0 ? `Reclaim bar vol ${round((trigger?.volume ?? 0) / (avg5Vol || 1), 2)}× prior avg (need ≥1.15×) — thin reversal, likely drift not real stop-run` : 'Insufficient candle data for volume check'),
     htfOk
       ? pass('15m trend not opposed', `15m ${input.trend15m} — sweep is a stop-hunt, not the next trend leg`)
       : fail('15m trend not opposed', `15m ${input.trend15m} against a ${dir} sweep — fading a trending 15m is the losing pattern (0/8 live)`),
