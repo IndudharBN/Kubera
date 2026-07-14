@@ -347,7 +347,7 @@ async function tryFireTradesInner(): Promise<void> {
     // so run fewer, higher-conviction slots; rows are confidence-sorted, so the best setups fill them.
     // Full capacity only when the index has direction and 2R targets are actually reachable.
     const flatTape = snapshot.spyTrend5m === 'FLAT' && snapshot.spyTrend15m === 'FLAT';
-    const effectiveMax = flatTape ? Math.min(6, getRiskSettings().maxPositions) : getRiskSettings().maxPositions;
+    const effectiveMax = flatTape ? Math.min(9, getRiskSettings().maxPositions) : getRiskSettings().maxPositions;
     if (openNow.length >= effectiveMax) break;
     // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
     // liquidity_sweep demoted 3→2: live record 5W/16L (24% WR, −₹489) doesn't earn triple concurrency.
