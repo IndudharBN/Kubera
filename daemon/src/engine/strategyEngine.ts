@@ -39,28 +39,7 @@ function rr(entry: number, stop: number, target: number, direction: 'BULL' | 'BE
   return risk > 0 && reward > 0 ? reward / risk : 0;
 }
 
-function planFromLevels(input: StrategyInput, entry: number, stop: number, target: number, trigger?: Candle): TradePlan | null {
-  const risk = input.direction === 'BULL' ? entry - stop : stop - entry;
-  if (!Number.isFinite(risk) || risk <= 0) return null;
-  const target1 = input.direction === 'BULL' ? entry + risk * PREFERRED_RR : entry - risk * PREFERRED_RR;
-  const target2 = input.direction === 'BULL' ? Math.max(target, target1) : Math.min(target, target1);
-  const value = rr(entry, stop, target2, input.direction);
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const riskPerShare = Math.abs(entry - stop);
-  return {
-    entry: round(entry, 2),
-    stop: round(stop, 2),
-    target: round(target2, 2),
-    target1: round(target1, 2),
-    target2: round(target2, 2),
-    rr: round(value, 2),
-    rr1: PREFERRED_RR,
-    riskPerShare: round(riskPerShare, 2),
-    triggerCandleTime: trigger?.time || new Date().toISOString(),
-    invalidation: input.direction === 'BULL' ? 'Price closes below stop or loses VWAP with volume.' : 'Price closes above stop or reclaims VWAP with volume.',
-    riskSize: 'Use account risk setting; default review size only.',
-  };
-}
+// (legacy single-target planFromLevels removed — all strategies use planFromLevelsT1T2)
 
 // T1/T2 explicit plan: T1=T1_RR scale out + move stop to BE, T2=structural level
 function planFromLevelsT1T2(

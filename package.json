@@ -9,7 +9,6 @@
     "preview": "vite preview --port=5004 --host=0.0.0.0",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "t212:bridge": "node scripts/trading212-local-bridge.mjs",
     "db:apply": "node scripts/apply-supabase-schema.mjs",
     "build:daemon": "tsc -p daemon/tsconfig.daemon.json",
     "kite:check": "tsc -p daemon/tsconfig.daemon.json && node daemon/dist/kite/smokeTest.js",
