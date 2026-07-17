@@ -1,9 +1,5 @@
-// Kubera — bar-stream provider seam.
-// Routes the daemon's live 5m-close trigger to Kite (NSE, default) or Alpaca by
-// env.BROKER. Both streams expose the same connect/subscribe/onFiveMinClose API.
+// Kubera — live bar stream (Kite ticker). Drives the 5m-close hot-set trigger.
 
-import { env } from './env';
-import { alpacaBarStream } from './alpacaBarStream';
 import { kiteBarStream } from './kite/kiteTicker';
 
 export interface BarStream {
@@ -14,4 +10,4 @@ export interface BarStream {
   destroy(): void;
 }
 
-export const barStream: BarStream = env.BROKER === 'kite' ? kiteBarStream : alpacaBarStream;
+export const barStream: BarStream = kiteBarStream;

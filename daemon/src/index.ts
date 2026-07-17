@@ -39,7 +39,7 @@ function portInUse(port: number): Promise<boolean> {
 
 async function main() {
   console.log(`[kubera-daemon] starting — ${new Date().toISOString()}`);
-  console.log(`[kubera-daemon] broker: ${env.BROKER}`);
+  console.log('[kubera-daemon] broker: kite (NSE)');
   console.log(`[kubera-daemon] port: ${env.DAEMON_PORT}`);
   console.log(`[kubera-daemon] auto-execute: ${env.AUTO_EXECUTE}`);
 
@@ -57,12 +57,10 @@ async function main() {
   // Refresh the daily Kite token AND load the instrument (symbol→token) map before arming the
   // scheduler. Without loadInstruments() every quote/bar call throws "Instruments not loaded" and
   // the daemon scans blind (0 rows) — the backtests called it explicitly, the live daemon never did.
-  if (env.BROKER === 'kite') {
-    await ensureKiteLogin().catch((e) => console.error('[kite] ensureKiteLogin error:', (e as Error).message));
-    await loadInstruments('NSE')
-      .then(() => console.log('[kite] instruments loaded ✓'))
-      .catch((e) => console.error('[kite] loadInstruments FAILED — daemon will scan blind:', (e as Error).message));
-  }
+  await ensureKiteLogin().catch((e) => console.error('[kite] ensureKiteLogin error:', (e as Error).message));
+  await loadInstruments('NSE')
+    .then(() => console.log('[kite] instruments loaded ✓'))
+    .catch((e) => console.error('[kite] loadInstruments FAILED — daemon will scan blind:', (e as Error).message));
 
   const s = getState();
   console.log(`[kubera-daemon] ready at ${toISTTime()} IST`);

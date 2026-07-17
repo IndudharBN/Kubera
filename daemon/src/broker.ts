@@ -1,15 +1,7 @@
-// Kubera — broker provider seam.
-//
-// Presents the Alpaca broker's function names + return shapes, routing each call
-// to Kite (NSE, default) or Alpaca (legacy baseline) by env.BROKER. The daemon
-// swaps brokers by import path only — call sites stay unchanged.
+// Kubera — broker layer (Zerodha Kite, NSE). The old Alpaca seam is gone; function names kept
+// ("paper" prefix and string-shaped fields) so call sites stayed unchanged through the migration.
 
-import { env } from './env';
-import * as alpaca from './alpacaBroker';
-import type { AlpacaAccount, AlpacaPosition, AlpacaFilledOrder } from './alpacaBroker';
 import * as kite from './kite/kiteBroker';
-
-const USE_KITE = env.BROKER === 'kite';
 
 export interface BracketParams {
   symbol: string;
@@ -20,8 +12,26 @@ export interface BracketParams {
   entry: number;
 }
 
-export async function getPaperAccount(): Promise<AlpacaAccount> {
-  if (!USE_KITE) return alpaca.getPaperAccount();
+export interface BrokerAccount {
+  equity: string;
+  cash: string;
+  portfolio_value: string;
+  buying_power: string;
+  currency: string;
+}
+
+export interface BrokerPosition {
+  symbol: string;
+  side: 'long' | 'short';
+  qty: string;
+  avg_entry_price: string;
+  current_price: string;
+  market_value: string;
+  unrealized_pl: string;
+  unrealized_plpc: string;
+}
+
+export async function getPaperAccount(): Promise<BrokerAccount> {
   const a = await kite.getAccount();
   return {
     equity: String(a.equity),
@@ -33,7 +43,6 @@ export async function getPaperAccount(): Promise<AlpacaAccount> {
 }
 
 export async function placePaperBracketOrder(params: BracketParams): Promise<{ id: string; stopId?: string; tpId?: string; error?: string }> {
-  if (!USE_KITE) return alpaca.placePaperBracketOrder(params);
   const r = await kite.placeBracketOrder(params);
   if (!r.ok) throw new Error(r.error ?? 'Kite order failed');
   // Entry placed but SL-M failed → loud warning; caller emergency-flattens the unhedged fill.
@@ -42,24 +51,20 @@ export async function placePaperBracketOrder(params: BracketParams): Promise<{ i
 }
 
 export async function closePaperPosition(symbol: string): Promise<{ avgPrice?: number }> {
-  if (!USE_KITE) { await alpaca.closePaperPosition(symbol); return {}; }
   const r = await kite.closePosition(symbol);
   return { avgPrice: r.avgPrice };
 }
 
 export async function closeAllPaperPositions(): Promise<void> {
-  if (!USE_KITE) return alpaca.closeAllPaperPositions();
   const positions = await kite.getPositions();
   await Promise.allSettled(positions.map((p) => kite.closePosition(p.symbol)));
 }
 
 export async function cancelPaperOrder(orderId: string): Promise<void> {
-  if (!USE_KITE) return alpaca.cancelPaperOrder(orderId);
   await kite.cancelOrder(orderId);
 }
 
-export async function getPaperPositions(): Promise<AlpacaPosition[]> {
-  if (!USE_KITE) return alpaca.getPaperPositions();
+export async function getPaperPositions(): Promise<BrokerPosition[]> {
   const positions = await kite.getPositions();
   return positions.map((p) => ({
     symbol: p.symbol,
@@ -73,22 +78,16 @@ export async function getPaperPositions(): Promise<AlpacaPosition[]> {
   }));
 }
 
-export async function getRecentFilledOrders(symbol: string): Promise<AlpacaFilledOrder[]> {
-  if (!USE_KITE) return alpaca.getRecentFilledOrders(symbol);
-  return []; // legacy shape unused on Kite; reconciliation uses getOrderMap() instead
-}
-
-/** Today's broker orders keyed by id (status + fill price) — for fill reconciliation. Kite only. */
+/** Today's broker orders keyed by id (status + fill price) — for fill reconciliation. */
 export async function getOrderMap(): Promise<Record<string, kite.OrderState>> {
-  if (!USE_KITE) return {};
   return kite.getOrderMap();
 }
 
-// Float helpers are Alpaca-specific; NSE float is sourced later (Phase 3). Stub for Kite.
-export function getFloatFromCache(symbol: string): number {
-  return USE_KITE ? 0 : alpaca.getFloatFromCache(symbol);
+// Float helpers were Alpaca-specific; NSE float is sourced later (Phase 3). Stubs.
+export function getFloatFromCache(_symbol: string): number {
+  return 0;
 }
 
-export async function fetchSharesOutstanding(symbols: string[]): Promise<void> {
-  if (!USE_KITE) return alpaca.fetchSharesOutstanding(symbols);
+export async function fetchSharesOutstanding(_symbols: string[]): Promise<void> {
+  /* no-op on NSE */
 }

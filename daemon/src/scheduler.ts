@@ -177,7 +177,7 @@ async function monitorLoop(): Promise<void> {
 
     // (#2) Reconcile against real broker fills FIRST (live only), then run the price-based monitor
     // (ratchet BE→T1→T2 + soft exits) on whatever is still open.
-    const reconciled = (env.BROKER === 'kite' && env.AUTO_EXECUTE) ? await reconcileBrokerFills(trades) : trades;
+    const reconciled = env.AUTO_EXECUTE ? await reconcileBrokerFills(trades) : trades;
     const reconClosed = reconciled.some((t, i) => t.status !== trades[i].status);
     // reconcileBrokerFills also rewrites entry to the real fill (new object) — persist that even if
     // nothing closed and the price-monitor reports no change, else the entry update is lost each cycle.
@@ -411,7 +411,7 @@ async function tryFireTradesInner(): Promise<void> {
     // will be at the LIVE price. If price has drifted so far that the geometry is broken — more than
     // half the planned risk away from entry, or with less than 60% of the planned stop room left —
     // skip. Kills stale-plan fires (AMBUJACEM: fill 26 paise from the stop; next fill BEYOND it).
-    if (env.BROKER === 'kite') {
+    if (true) { // kite-only daemon
       let ltp: number | undefined;
       try {
         ltp = (await getKiteLtp([newTrade.symbol]))[newTrade.symbol];
@@ -589,7 +589,7 @@ export function startScheduler(): void {
   // that reset (machine kept awake, never restarted), the boot-time login goes stale and every Kite
   // call silently fails. Re-validate every 20 min and re-auth via TOTP only if expired — cheap
   // (a getProfile probe) and keeps unattended/24-7 operation alive without a morning restart.
-  if (env.BROKER === 'kite') {
+  if (true) { // kite-only daemon
     setInterval(() => {
       ensureKiteLogin().catch((err) => console.warn('[kite] periodic re-auth failed:', (err as Error).message));
     }, 20 * 60 * 1000);

@@ -1,69 +1,76 @@
-// Kubera — market-data provider seam.
+// Kubera — market-data layer (Kite/NSE).
 //
-// Presents the alpacaClient data surface used by the scanner, routing to Kite
-// (NSE, default) or Alpaca (legacy baseline) by env.BROKER. Typed wrappers keep
-// clean call signatures regardless of which provider is active.
+// Thin façade over kite/kiteData so scanner call-sites keep stable imports. The old
+// Alpaca provider seam is gone — Kubera trades NSE via Kite only.
 
-import { env } from './env';
-import * as alpaca from './alpacaClient';
 import * as kited from './kite/kiteData';
 import type { Candle, CandleSet, Interval } from './engine/ohlcv';
-import type { SymbolMeta } from './alpacaClient';
 
-export type { SymbolMeta, CatalystTier } from './alpacaClient';
+// Shared meta shape produced by the universe fetch (one quote batch per scan).
+export interface SymbolMeta {
+  symbol: string;
+  price: number;
+  prevClose: number;
+  gapPct: number;
+  todayVolume: number;
+  rvolEst: number;
+  intradayChangePct: number;
+  prevDayHigh: number;
+  prevDayLow: number;
+}
 
-const USE_KITE = env.BROKER === 'kite';
+export type CatalystTier = 'hard' | 'soft' | 'none';
 
 export function fetchBars(symbols: string[], interval: Interval): Promise<Record<string, Candle[]>> {
-  return USE_KITE ? kited.fetchBars(symbols, interval) : alpaca.fetchBars(symbols, interval);
+  return kited.fetchBars(symbols, interval);
 }
 
 export function fetchYahooDailyBars(symbols: string[]): Promise<Record<string, Candle[]>> {
-  return USE_KITE ? kited.fetchYahooDailyBars(symbols) : alpaca.fetchYahooDailyBars(symbols);
+  return kited.fetchYahooDailyBars(symbols);
 }
 
 export function fetchUniverseMeta(symbols: string[]): Promise<SymbolMeta[]> {
-  return USE_KITE ? kited.fetchUniverseMeta(symbols) : alpaca.fetchUniverseMeta(symbols);
+  return kited.fetchUniverseMeta(symbols);
 }
 
 export function buildCandleSet(
   symbol: string,
   barMaps: Partial<Record<Interval, Record<string, Candle[]>>>,
 ): CandleSet {
-  return USE_KITE ? kited.buildCandleSet(symbol, barMaps) : alpaca.buildCandleSet(symbol, barMaps);
+  return kited.buildCandleSet(symbol, barMaps);
 }
 
 export function selectTopSymbols(metas: SymbolMeta[], n?: number): string[] {
-  return USE_KITE ? kited.selectTopSymbols(metas, n) : alpaca.selectTopSymbols(metas, n);
+  return kited.selectTopSymbols(metas, n);
 }
 
-export function fetchNewsFlags(symbols: string[]): ReturnType<typeof alpaca.fetchNewsFlags> {
-  return USE_KITE ? kited.fetchNewsFlags(symbols) : alpaca.fetchNewsFlags(symbols);
+export function fetchNewsFlags(symbols: string[]): Promise<Record<string, CatalystTier>> {
+  return kited.fetchNewsFlags(symbols);
 }
 
 export function fetchSectorTrends(): Promise<Record<string, 'UP' | 'DOWN' | 'FLAT'>> {
-  return USE_KITE ? kited.fetchSectorTrends() : alpaca.fetchSectorTrends();
+  return kited.fetchSectorTrends();
 }
 
 export function fetchSpyDailyBars(): Promise<{ spyBars: Candle[]; vixLevel: number | null }> {
-  return USE_KITE ? kited.fetchSpyDailyBars() : alpaca.fetchSpyDailyBars();
+  return kited.fetchSpyDailyBars();
 }
 
 export function buildDynamicUniverse(pinned: string[], fallback: string[]): Promise<string[]> {
-  return USE_KITE ? kited.buildDynamicUniverse(pinned, fallback) : alpaca.buildDynamicUniverse(pinned, fallback);
+  return kited.buildDynamicUniverse(pinned, fallback);
 }
 
 export function clearUniverseCache(): void {
-  return USE_KITE ? kited.clearUniverseCache() : alpaca.clearUniverseCache();
+  return kited.clearUniverseCache();
 }
 
 export function getUniverseBuiltAt(): string | null {
-  return USE_KITE ? kited.getUniverseBuiltAt() : alpaca.getUniverseBuiltAt();
+  return kited.getUniverseBuiltAt();
 }
 
 export function isUniverseFallback(): boolean {
-  return USE_KITE ? kited.isUniverseFallback() : alpaca.isUniverseFallback();
+  return kited.isUniverseFallback();
 }
 
-export const SYMBOL_SECTOR: Record<string, string> = USE_KITE ? kited.SYMBOL_SECTOR : alpaca.SYMBOL_SECTOR;
-export const UNIVERSE_TARGET: number = USE_KITE ? kited.UNIVERSE_TARGET : alpaca.UNIVERSE_TARGET;
+export const SYMBOL_SECTOR: Record<string, string> = kited.SYMBOL_SECTOR;
+export const UNIVERSE_TARGET: number = kited.UNIVERSE_TARGET;

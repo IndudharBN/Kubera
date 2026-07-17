@@ -12,8 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Candle, CandleSet, Interval } from '../engine/ohlcv';
-import type { SymbolMeta } from '../alpacaClient';
-import type { CatalystTier } from '../alpacaClient';
+import type { SymbolMeta, CatalystTier } from '../marketData'; // type-only — erased at compile, no runtime cycle
 import { getCandles, getCandlesByToken, getQuotes, getLtp, INDEX_TOKENS } from './kiteClient';
 import { nseSessionVolumeFraction } from '../nse';
 
