@@ -9,9 +9,11 @@ import { istDateOf } from './tzfast';
 
 const MIN_RR = 1.5;
 const PREFERRED_RR = 2.5;
-const T1_RR = 1.0;           // scale out 50% at T1, SL → entry (BE). 1.0R (was 1.5): in 85 live trades
-                             // the best winner peaked at 0.92R realized — 1.5R was never touched. A
-                             // reachable first rung banks half and arms the BE ratchet for real.
+const T1_RR = 0.7;           // scale out 50% at T1, SL → entry (BE). 0.7R (was 1.0, originally 1.5):
+                             // 127 live trades post-1.0R-change still show 0 T1 hits — but EOD closes
+                             // (drifted to the 15:15 close, never tagged a rung) peaked at +0.73R
+                             // realized. The move is there; the rung was still above it. Live evidence,
+                             // not a guess — revisit again once trades actually start tagging T1.
 const STOP_BUFFER_ATR = 0.5; // breathing room beyond anchor extreme
 const MIN_STOP_ATR = 0.5;    // stop must be ≥ 50% of daily ATR from entry
 const MIN_STOP_PCT = 0.005;  // stop must be ≥ 0.5% of price — catches atr20=0 (no daily data)
@@ -179,10 +181,12 @@ function findNearestSwingTarget(
 function structuralT1(candles: Candle[], dir: 'BULL' | 'BEAR', entry: number, risk: number): number {
   const fallback = dir === 'BULL' ? entry + risk * T1_RR : entry - risk * T1_RR;
   if (risk <= 0) return fallback;
-  // T1 band [1.0R, 1.5R] (cap was 2.0R): the first scale-out must be reachable intraday.
-  const floor1R = dir === 'BULL' ? entry + risk * 1.0 : entry - risk * 1.0;
-  const cap15R  = dir === 'BULL' ? entry + risk * 1.5 : entry - risk * 1.5;
-  const pivot = findNearestSwingTarget(candles.slice(-80), dir, floor1R, cap15R, 2);
+  // T1 band [0.7R, 1.0R] (was [1.0R, 1.5R]): live evidence (127 trades) shows EOD drift-closes
+  // peaking around +0.73R with zero T1 tags at the 1.0R rung — the first scale-out must sit below
+  // what this tape realistically delivers, not above it.
+  const floor1R = dir === 'BULL' ? entry + risk * 0.7 : entry - risk * 0.7;
+  const cap1R   = dir === 'BULL' ? entry + risk * 1.0 : entry - risk * 1.0;
+  const pivot = findNearestSwingTarget(candles.slice(-80), dir, floor1R, cap1R, 2);
   return pivot !== null ? pivot : fallback;
 }
 
