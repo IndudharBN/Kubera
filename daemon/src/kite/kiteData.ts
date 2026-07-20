@@ -19,8 +19,9 @@ import { nseSessionVolumeFraction } from '../nse';
 export const UNIVERSE_TARGET = 100;
 const BENCH = 'SPY'; // sentinel used by the engine → NIFTY 50 here
 
-// Seed of liquid NSE names (fallback / starting set). TODO: replace with the
-// daily NSE NIFTY-500 constituents CSV for a fully dynamic seed.
+// Tier-2 fallback seed: liquid large-caps used only when the Tier-1 NIFTY-500 list (below)
+// is unavailable, OR when it's available but yields < MIN_UNIVERSE_SYMBOLS passing candidates
+// (e.g. a very quiet ATR/turnover day) — merged in to top the universe back up.
 const NSE_SEED: string[] = [
   'RELIANCE','HDFCBANK','ICICIBANK','INFY','TCS','SBIN','AXISBANK','KOTAKBANK','LT','ITC',
   'BHARTIARTL','BAJFINANCE','HINDUNILVR','HCLTECH','MARUTI','SUNPHARMA','TATAMOTORS','TITAN','WIPRO','ULTRACEMCO',
@@ -234,6 +235,55 @@ function turnoverCr(daily: Candle[]): number {
   return recent.reduce((s, c) => s + (c.close * c.volume) / 1e7, 0) / recent.length; // ₹ crore
 }
 
+// ── Tier-1 seed: official NSE NIFTY-500 constituent list ───────────────────────
+// Refetched monthly (index reconstitutions are quarterly at most) so the scan universe
+// tracks the real market instead of a hand-maintained array. Falls back to the cached
+// copy, then to NSE_SEED, if the fetch fails (no network dependency on the hot path).
+const NIFTY500_URL = 'https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv';
+const NIFTY500_FILE = path.join(DATA_DIR, 'nifty500-seed.json');
+const NIFTY500_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MIN_UNIVERSE_SYMBOLS = 75; // below this after Tier-1 filtering, merge in the Tier-2 seed
+
+async function fetchNifty500Symbols(): Promise<string[] | null> {
+  try {
+    const res = await fetch(NIFTY500_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': 'text/csv,*/*' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const csv = await res.text();
+    // Columns: Company Name,Industry,Symbol,Series,ISIN Code
+    const symbols = csv.split('\n').slice(1)
+      .map((line) => line.split(',')[2]?.trim())
+      .filter((s): s is string => !!s && /^[A-Z0-9&-]+$/.test(s));
+    return symbols.length >= 400 ? symbols : null; // sanity floor — a truncated/malformed fetch shouldn't poison the seed
+  } catch (e) {
+    console.warn('[universe] NIFTY-500 fetch failed:', (e as Error).message);
+    return null;
+  }
+}
+
+async function loadNifty500Seed(): Promise<string[]> {
+  try {
+    if (fs.existsSync(NIFTY500_FILE) && Date.now() - fs.statSync(NIFTY500_FILE).mtimeMs < NIFTY500_TTL) {
+      const cached = JSON.parse(fs.readFileSync(NIFTY500_FILE, 'utf-8')) as string[];
+      if (cached.length >= 400) return cached;
+    }
+  } catch { /* refetch below */ }
+
+  const fresh = await fetchNifty500Symbols();
+  if (fresh) {
+    try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(NIFTY500_FILE, JSON.stringify(fresh)); } catch { /* cache is best-effort */ }
+    console.log(`[universe] NIFTY-500 seed refreshed: ${fresh.length} symbols`);
+    return fresh;
+  }
+  // Fetch failed — serve a stale cache if one exists, else fall through to the Tier-2 seed only.
+  try {
+    if (fs.existsSync(NIFTY500_FILE)) return JSON.parse(fs.readFileSync(NIFTY500_FILE, 'utf-8')) as string[];
+  } catch { /* ignore */ }
+  return [];
+}
+
 export async function buildDynamicUniverse(pinned: string[], _fallbackList: string[]): Promise<string[]> {
   // serve fresh cache
   try {
@@ -244,21 +294,35 @@ export async function buildDynamicUniverse(pinned: string[], _fallbackList: stri
     }
   } catch { /* rebuild below */ }
 
-  const seed = [...new Set([...NSE_SEED, ...pinned])];
-  const scored = await mapLimit(seed, 3, async (sym) => {
-    const daily = await dailyBars(sym).catch(() => [] as Candle[]);
-    if (daily.length < 20) return null;
-    const price = daily[daily.length - 1].close;
-    const atrPct = atrPctOf(daily);
-    const turn = turnoverCr(daily);
-    const ok = price >= 50 && price <= 5000 && atrPct >= 1.5 && atrPct <= 12 && turn >= 25;
-    return ok ? { sym, rank: turn } : null;
-  });
+  const nifty500 = await loadNifty500Seed();
+  const tier1Seed = [...new Set([...(nifty500.length ? nifty500 : NSE_SEED), ...pinned])];
 
-  const passed = scored.filter((x): x is { sym: string; rank: number } => x !== null)
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, UNIVERSE_TARGET)
-    .map((x) => x.sym);
+  const scoreSeed = async (symbols: string[]) => {
+    const scored = await mapLimit(symbols, 3, async (sym) => {
+      const daily = await dailyBars(sym).catch(() => [] as Candle[]);
+      if (daily.length < 20) return null;
+      const price = daily[daily.length - 1].close;
+      const atrPct = atrPctOf(daily);
+      const turn = turnoverCr(daily);
+      const ok = price >= 50 && price <= 5000 && atrPct >= 1.5 && atrPct <= 12 && turn >= 25;
+      return ok ? { sym, rank: turn } : null;
+    });
+    return scored.filter((x): x is { sym: string; rank: number } => x !== null);
+  };
+
+  let passedList = (await scoreSeed(tier1Seed)).sort((a, b) => b.rank - a.rank);
+
+  // Tier-2 fallback: Tier-1 filtering yielded too few candidates (e.g. NIFTY-500 fetch failed and
+  // NSE_SEED alone is thin post-filter, or an unusually quiet day) — merge in the liquid seed too.
+  if (passedList.length < MIN_UNIVERSE_SYMBOLS && nifty500.length) {
+    console.warn(`[universe] Tier-1 yielded only ${passedList.length} (<${MIN_UNIVERSE_SYMBOLS}) — merging Tier-2 seed`);
+    const already = new Set(passedList.map((x) => x.sym));
+    const tier2Only = NSE_SEED.filter((s) => !already.has(s) && !tier1Seed.includes(s));
+    const tier2Passed = await scoreSeed(tier2Only);
+    passedList = [...passedList, ...tier2Passed].sort((a, b) => b.rank - a.rank);
+  }
+
+  const passed = passedList.slice(0, UNIVERSE_TARGET).map((x) => x.sym);
 
   if (passed.length < 10) {
     _fallback = true; _builtAt = new Date().toISOString();
