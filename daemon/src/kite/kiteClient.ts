@@ -170,6 +170,17 @@ function isRateLimit(e: unknown): boolean {
   return /too many requests|rate limit|\b429\b/i.test(String((e as Error)?.message ?? ''));
 }
 
+// getHistoricalData has no built-in timeout — if the underlying request hangs (no response, no
+// error, no rejection — observed live: a backtest run sat forever on one symbol, 0% CPU growth)
+// the caller awaits indefinitely. Race it against a hard deadline so a stuck request surfaces as
+// a normal error the retry loop below can handle, instead of hanging the whole process.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 export async function getCandlesByToken(
   token: number,
   interval: Interval,
@@ -180,9 +191,13 @@ export async function getCandlesByToken(
   for (let attempt = 1; attempt <= 2 && !rows; attempt++) {
     await histGate();
     try {
-      rows = (await kc().getHistoricalData(token, KITE_INTERVAL[interval], fromDate, toDate)) as unknown as RawHistCandle[];
+      rows = (await withTimeout(
+        kc().getHistoricalData(token, KITE_INTERVAL[interval], fromDate, toDate) as unknown as Promise<RawHistCandle[]>,
+        15_000,
+        `getHistoricalData(token=${token})`,
+      ));
     } catch (e) {
-      if (isRateLimit(e) && attempt < 2) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      if ((isRateLimit(e) || /timed out/.test((e as Error).message)) && attempt < 2) { await new Promise((r) => setTimeout(r, 1000)); continue; }
       throw e;
     }
   }
