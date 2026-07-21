@@ -91,14 +91,16 @@ export function buildPaperTrade(
   if (quantity <= 0) return null;
   const filledNotional = Math.round(quantity * plan.entry * 100) / 100;
 
-  // Cost-aware R:R gate: require ≥1.8R *after* NSE intraday charges (STT/brokerage/GST/…).
-  // Raised from 1.5 — 3 live days showed the marginal tickets (net gross ≈ charges) were pure churn:
-  // ~⅓ of trades grossed <₹25 while costing ₹7–8 each. A higher net hurdle kills them at sizing time.
+  // Cost-aware R:R gate: require ≥1.65R *after* NSE intraday charges (STT/brokerage/GST/…).
+  // 1.8 (from 1.5) killed the small-ticket churn it targeted, but the Jul-2026 backtest re-run
+  // showed it overshot: genuine 1.58-1.61R gross setups (ADANIENT liquidity_sweep) were rejected
+  // here on a day with ₹40k+ of idle capital and no other qualified trades. Churn was failing
+  // gross R:R around 1.2-1.5, not 1.6-1.8 — 1.65 reopens the good band without the original churn.
   const grossReward = Math.abs(plan.target2 - plan.entry) * quantity;
   const grossRisk = Math.abs(plan.entry - plan.stop) * quantity;
   const cost = nseRoundTripCost(plan.entry, quantity);
   const netRR = (grossReward - cost) / (grossRisk + cost);
-  if (!Number.isFinite(netRR) || netRR < 1.8) return null;
+  if (!Number.isFinite(netRR) || netRR < 1.65) return null;
 
   return {
     id: `paper-${row.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
