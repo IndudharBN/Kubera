@@ -23,11 +23,20 @@ import { nseRoundTripCost, nseSessionVolumeFraction } from '../nse';
 import type { PaperTrade } from '../types';
 import { ensureKiteLogin } from '../kite/kiteLogin';
 import { loadInstruments, getCandles, getCandlesByToken, INDEX_TOKENS } from '../kite/kiteClient';
+import { getRiskSettings } from '../riskManager';
+import { setState } from '../stateStore';
 
 // Data source: 'kite' (volume-complete — default) or 'yahoo' (free, no auth, but
 // intraday volume is unreliable → RVOL gates reject everything). Set BT_SOURCE=yahoo to force Yahoo.
 const SOURCE = (process.env['BT_SOURCE'] ?? 'kite').toLowerCase();
 const ONLY = process.env['BT_ONLY'] ?? ''; // if set, grade ONLY this strategyId (isolation testing)
+// buildRowFromAlpaca filters signals by getRiskSettings().disabledStrategies (same list live uses).
+// Set BT_ALL_STRATEGIES=true to clear it for this run only — validates the currently-disabled
+// strategies against TODAY's code (sizing gates, exit ladder) instead of the backtest that disabled
+// them originally. Uses the real saveRiskSettings() so it flows through getState() everywhere,
+// not a parallel code path — but writes data/daemon-state.json, so this must NOT run concurrently
+// with the live daemon (isolation is enforced by the operator, same as the rest of this harness).
+const ALL_STRATEGIES_FLAG = process.env['BT_ALL_STRATEGIES'] === 'true';
 // position sizing now lives in DEFAULT_RISK_SETTINGS.sizeMultiplier (applied in buildPaperTrade),
 // so the backtest mirrors live exactly. To sweep, change that setting.
 const KITE_DAYS: Record<string, number> = { '1m': 40, '5m': 60, '15m': 60, '1h': 60, '1d': 400 };
@@ -126,11 +135,22 @@ async function loadSeries(symbol: string, interval: '1m' | '5m' | '15m' | '1h' |
 
 interface Closed { strategyId: string; group: string; netPnl: number; r: number; }
 
-// HIGH-BETA / HIGH-ATR basket — the trending movers the live universe filter (ATR%/beta/turnover)
-// would actually surface, NOT mega-caps. Tests whether momentum strategies (mss/ema20/ORB) come alive
-// on stocks that trend intraday. Adani/PSU-banks/Vedanta/railways = high-beta, retail-momentum-driven.
+// Representative slice of the LIVE 100-symbol scan universe (data/kite-universe-cache.json,
+// 2026-07-21 build — real turnover/ATR-filtered NIFTY-500 output, not a hand-picked basket).
+// The old 8-symbol "high-beta basket" produced a near-zero strategy hit rate (14 tradePlans in
+// 19,198 qualified bars) — too narrow to tell "strategies rarely fire" apart from "these 8 names
+// rarely set up." This mixes mega-caps, banks, high-beta PSU/metals/Adani-group, and the specific
+// names that produced live wins this week (CANBK, PAYTM, COFORGE, HCLTECH) so the backtest is
+// actually testing what the daemon trades, not a proxy for it.
 const SYMBOLS = [
-  'ADANIENT', 'ADANIPORTS', 'VEDL', 'PNB', 'CANBK', 'BANKBARODA', 'JSWSTEEL', 'IRCTC',
+  // mega-cap / index heavyweights
+  'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'BHARTIARTL', 'SBIN', 'AXISBANK', 'LT',
+  // banks / financials
+  'KOTAKBANK', 'BAJFINANCE', 'BANKBARODA', 'CANBK', 'SHRIRAMFIN', 'FEDERALBNK',
+  // high-beta PSU / metals / Adani-group (the old basket's thesis, kept)
+  'ADANIENT', 'ADANIPORTS', 'VEDL', 'JSWSTEEL', 'TATASTEEL', 'HINDALCO', 'NTPC', 'ONGC',
+  // this week's live winners — validate the engine on names it actually traded
+  'PAYTM', 'COFORGE', 'HCLTECH', 'TRENT', 'DLF', 'CGPOWER', 'MOTHERSON', 'WIPRO',
 ];
 const ACCOUNT = 100_000;
 
@@ -141,6 +161,10 @@ async function main(): Promise<void> {
     if (!ok) { console.error('Kite login failed — fill daemon/.env.daemon (api_key/secret + access_token OR user/password/totp)'); process.exit(1); }
     await loadInstruments('NSE');
     console.log('Kite session OK + NSE instruments loaded');
+  }
+  if (ALL_STRATEGIES_FLAG) {
+    setState((s) => ({ ...s, riskSettings: { ...getRiskSettings(), disabledStrategies: [] } }));
+    console.log('[bt] BT_ALL_STRATEGIES=true — disabledStrategies cleared for this run (in-memory only, no disk write)');
   }
   installClock();
 
@@ -154,6 +178,7 @@ async function main(): Promise<void> {
 
   // DIAG counters (temporary — remove once "0 entries across the whole run" is root-caused)
   let diagTotal = 0, diagBasePassFail = 0, diagAdrFail = 0, diagVixFail = 0, diagPassedGates = 0, diagPlanSample = 0, diagBuildFailSample = 0;
+  let diagBarsWithAnyPlan = 0, diagPlansTotal = 0;
 
   const closedTrades: Closed[] = [];
   const equityCurve: number[] = [];
@@ -290,7 +315,11 @@ async function main(): Promise<void> {
         else {
           diagPassedGates++;
           const withPlan = row.strategySignals.filter((s) => s.tradePlan).length;
-          if (withPlan > 0 && diagPlanSample < 3) { diagPlanSample++; console.log(`[diag] ${sym} ${iso}: ${withPlan} strategies with a tradePlan`); }
+          if (withPlan > 0) {
+            diagBarsWithAnyPlan++;
+            diagPlansTotal += withPlan;
+            if (diagPlanSample < 3) { diagPlanSample++; console.log(`[diag] ${sym} ${iso}: ${withPlan} strategies with a tradePlan`); }
+          }
         }
       }
 
@@ -333,7 +362,7 @@ async function main(): Promise<void> {
   }
 
   _mockMs = null;
-  console.log(`[diag] bars evaluated=${diagTotal} basePassFail=${diagBasePassFail} adrFail=${diagAdrFail} vixFail=${diagVixFail} passedAllGates=${diagPassedGates}`);
+  console.log(`[diag] bars evaluated=${diagTotal} basePassFail=${diagBasePassFail} adrFail=${diagAdrFail} vixFail=${diagVixFail} passedAllGates=${diagPassedGates} barsWithAnyPlan=${diagBarsWithAnyPlan} totalPlansAcrossStrategies=${diagPlansTotal}`);
   report(closedTrades, equityCurve);
 }
 
