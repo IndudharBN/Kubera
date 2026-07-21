@@ -152,6 +152,9 @@ async function main(): Promise<void> {
   const vixDaily = await loadSeries('^INDIAVIX', '1d', true, INDEX_TOKENS.INDIAVIX);
   console.log(`benchmark: NIFTY ${niftyDaily.length}d / ${niftyFive.length}×5m, VIX ${vixDaily.length}d`);
 
+  // DIAG counters (temporary — remove once "0 entries across the whole run" is root-caused)
+  let diagTotal = 0, diagBasePassFail = 0, diagAdrFail = 0, diagVixFail = 0, diagPassedGates = 0, diagPlanSample = 0, diagBuildFailSample = 0;
+
   const closedTrades: Closed[] = [];
   const equityCurve: number[] = [];
   let equity = 0;
@@ -277,6 +280,20 @@ async function main(): Promise<void> {
 
       const row = buildRowFromAlpaca(sym, meta, candleSet, providerStatus, 'none', {}, null, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, nD);
 
+      // DIAG: one-shot dump of why bars fall out, to unblock "0 entries across the whole run".
+      diagTotal++;
+      if (!row.basePass) { diagBasePassFail++; if (diagBasePassFail <= 3) console.log(`[diag] basePass fail ${sym} ${iso}: ${row.baseReason}`); }
+      else if (row.adrExhausted) diagAdrFail++;
+      else {
+        const vm = vixLevel !== null && vixLevel > 30 ? 0 : vixLevel !== null && vixLevel > 20 ? 0.5 : 1;
+        if (vm === 0) diagVixFail++;
+        else {
+          diagPassedGates++;
+          const withPlan = row.strategySignals.filter((s) => s.tradePlan).length;
+          if (withPlan > 0 && diagPlanSample < 3) { diagPlanSample++; console.log(`[diag] ${sym} ${iso}: ${withPlan} strategies with a tradePlan`); }
+        }
+      }
+
       // ── entry gates (raw per-strategy edge; portfolio caps + regime routing intentionally OFF) ──
       if (!row.basePass) continue;                          // liquidity/price/ATR sanity only
       if (row.adrExhausted) continue;
@@ -293,15 +310,30 @@ async function main(): Promise<void> {
         if ((perStratDay.get(dk) ?? 0) >= 3) continue;
         const sigRow = { ...row, primaryStrategy: s, tradePlan: s.tradePlan, direction: s.direction };
         const t = buildPaperTrade(sigRow, openTrades, iso, ACCOUNT, spyTrend5m, spyTrend15m, vixMult * regime.sizeMult);
-        if (!t) continue;
+        if (!t) {
+          if (diagBuildFailSample < 5) {
+            diagBuildFailSample++;
+            const risk = Math.abs(s.tradePlan!.entry - s.tradePlan!.stop);
+            console.log(`[diag] buildPaperTrade null: ${sym} ${s.strategyId} plan.rr=${s.tradePlan!.rr} entry=${s.tradePlan!.entry} stop=${s.tradePlan!.stop} risk=${risk} group=${s.signalGroup ?? 'UNCLASSIFIED'}`);
+          }
+          continue;
+        }
         openTrades.push(t); entered++;
         perStratDay.set(dk, (perStratDay.get(dk) ?? 0) + 1);
       }
     }
     console.log(`${sym.padEnd(11)} ${five.length}×5m bars → ${entered} entries`);
+    // Reset the mocked clock BEFORE the next symbol's loadSeries() calls. _mockMs stays set to the
+    // last replayed bar's (historical) timestamp after this symbol's loop exits; left in place, the
+    // NEXT symbol's real-time histGate() computes Date.now() (mocked, months in the past) minus
+    // _lastHistAt (real, current) -> a huge negative gap -> setTimeout waits for an enormous REAL
+    // duration. Observed live: the harness hangs indefinitely between symbols (0% CPU growth) —
+    // this was the actual cause, not a Kite rate-limit or network issue.
+    _mockMs = null;
   }
 
   _mockMs = null;
+  console.log(`[diag] bars evaluated=${diagTotal} basePassFail=${diagBasePassFail} adrFail=${diagAdrFail} vixFail=${diagVixFail} passedAllGates=${diagPassedGates}`);
   report(closedTrades, equityCurve);
 }
 
