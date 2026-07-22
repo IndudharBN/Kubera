@@ -22,11 +22,10 @@ export function closePaperTrade(
   closedAt = new Date().toISOString(),
 ): PaperTrade {
   const result = paperPnl(trade, exitPrice);
-  const correctedOutcome: PaperTrade['outcome'] = outcome === 'Stop' && result.pnl > 0 ? 'Manual' : outcome;
   return {
     ...trade,
     status: 'Closed',
-    outcome: correctedOutcome,
+    outcome,
     exitPrice: Number(exitPrice.toFixed(2)),
     pnl: result.pnl,
     pnlPercent: result.pnlPercent,
