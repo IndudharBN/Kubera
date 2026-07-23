@@ -52,8 +52,8 @@ export function fetchSectorTrends(): Promise<Record<string, 'UP' | 'DOWN' | 'FLA
   return kited.fetchSectorTrends();
 }
 
-export function fetchSpyDailyBars(): Promise<{ spyBars: Candle[]; vixLevel: number | null }> {
-  return kited.fetchSpyDailyBars();
+export function fetchNifty50DailyBars(): Promise<{ nifty50Bars: Candle[]; vixLevel: number | null }> {
+  return kited.fetchNifty50DailyBars();
 }
 
 export function buildDynamicUniverse(pinned: string[], fallback: string[]): Promise<string[]> {

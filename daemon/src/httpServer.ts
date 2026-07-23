@@ -94,8 +94,8 @@ app.get('/api/state', (_req, res) => {
   const state = getState();
   res.json({
     rows: snapshot?.rows ?? [],
-    spyTrend5m: snapshot?.spyTrend5m ?? 'FLAT',
-    spyTrend15m: snapshot?.spyTrend15m ?? 'FLAT',
+    nifty50Trend5m: snapshot?.nifty50Trend5m ?? 'FLAT',
+    nifty50Trend15m: snapshot?.nifty50Trend15m ?? 'FLAT',
     regime: snapshot?.regime ?? null,
     marketLive: snapshot?.marketLive ?? false,
     marketStatus: snapshot?.marketStatus ?? 'Daemon starting…',
@@ -340,8 +340,8 @@ export function startHttpServer(): void {
     if (snapshot) {
       ws.send(JSON.stringify({ event: 'snapshot_update', payload: {
         rows: snapshot.rows,
-        spyTrend5m: snapshot.spyTrend5m,
-        spyTrend15m: snapshot.spyTrend15m,
+        nifty50Trend5m: snapshot.nifty50Trend5m,
+        nifty50Trend15m: snapshot.nifty50Trend15m,
         regime: snapshot.regime,
         fetchedAt: snapshot.fetchedAt,
       }}));

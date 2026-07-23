@@ -346,7 +346,7 @@ async function tryFireTradesInner(): Promise<void> {
     // Flat tape = targets rarely resolve (winners drift to EOD at 0.2–0.6R while losers pay full 1R),
     // so run fewer, higher-conviction slots; rows are confidence-sorted, so the best setups fill them.
     // Full capacity only when the index has direction and 2R targets are actually reachable.
-    const flatTape = snapshot.spyTrend5m === 'FLAT' && snapshot.spyTrend15m === 'FLAT';
+    const flatTape = snapshot.nifty50Trend5m === 'FLAT' && snapshot.nifty50Trend15m === 'FLAT';
     const effectiveMax = flatTape ? Math.min(9, getRiskSettings().maxPositions) : getRiskSettings().maxPositions;
     if (openNow.length >= effectiveMax) break;
     // Per-strategy concurrent across symbols: proven cores 3, satellites 2 (let the edge breathe, cap dilution).
@@ -362,7 +362,7 @@ async function tryFireTradesInner(): Promise<void> {
       continue;
     }
 
-    if (isTideBlocked(row, snapshot.spyTrend5m, snapshot.spyTrend15m, sig)) {
+    if (isTideBlocked(row, snapshot.nifty50Trend5m, snapshot.nifty50Trend15m, sig)) {
       console.log(`[executor] ${row.symbol} tide blocked`);
       continue;
     }
@@ -393,7 +393,7 @@ async function tryFireTradesInner(): Promise<void> {
 
     if (!canPaperTradeRow(row, trades, accountBalance)) continue;
 
-    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.spyTrend5m, snapshot.spyTrend15m, sizeMult);
+    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.nifty50Trend5m, snapshot.nifty50Trend15m, sizeMult);
     if (!newTrade) continue;
 
     const betaCheck = checkPortfolioBeta(

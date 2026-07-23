@@ -10,9 +10,9 @@ function dailyReturns(candles: Candle[]): number[] {
   return out;
 }
 
-export function computeBeta(stockDaily: Candle[], spyDaily: Candle[], lookback = 20): number {
+export function computeBeta(stockDaily: Candle[], nifty50Daily: Candle[], lookback = 20): number {
   const sRet = dailyReturns(stockDaily).slice(-lookback);
-  const bRet = dailyReturns(spyDaily).slice(-lookback);
+  const bRet = dailyReturns(nifty50Daily).slice(-lookback);
   const n = Math.min(sRet.length, bRet.length);
   if (n < 5) return 1.0;
   let meanS = 0, meanB = 0;

@@ -6,8 +6,8 @@ const LOW_BETA_TIDE_EXEMPT = 0.6;
 
 export function isTideBlocked(
   row: ProTradeRow,
-  spyTrend5m: 'UP' | 'DOWN' | 'FLAT' | undefined,
-  spyTrend15m: 'UP' | 'DOWN' | 'FLAT' | undefined,
+  nifty50Trend5m: 'UP' | 'DOWN' | 'FLAT' | undefined,
+  nifty50Trend15m: 'UP' | 'DOWN' | 'FLAT' | undefined,
   sig?: ProTradeRow['primaryStrategy'],
 ): boolean {
   if (!sig) return false;
@@ -27,9 +27,9 @@ export function isTideBlocked(
     if (row.beta > 0 && row.beta < LOW_BETA_TIDE_EXEMPT) return false;
     const tradeDir = sig.direction;
     if (tradeDir === 'NEUTRAL') return false;
-    if (!spyTrend5m || spyTrend5m === 'FLAT' || !spyTrend15m || spyTrend15m === 'FLAT') return false;
-    const counter5m = (tradeDir === 'BULL' && spyTrend5m === 'DOWN') || (tradeDir === 'BEAR' && spyTrend5m === 'UP');
-    const counter15m = (tradeDir === 'BULL' && spyTrend15m === 'DOWN') || (tradeDir === 'BEAR' && spyTrend15m === 'UP');
+    if (!nifty50Trend5m || nifty50Trend5m === 'FLAT' || !nifty50Trend15m || nifty50Trend15m === 'FLAT') return false;
+    const counter5m = (tradeDir === 'BULL' && nifty50Trend5m === 'DOWN') || (tradeDir === 'BEAR' && nifty50Trend5m === 'UP');
+    const counter15m = (tradeDir === 'BULL' && nifty50Trend15m === 'DOWN') || (tradeDir === 'BEAR' && nifty50Trend15m === 'UP');
     return counter5m && counter15m;
   }
 

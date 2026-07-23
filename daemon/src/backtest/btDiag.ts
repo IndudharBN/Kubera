@@ -108,16 +108,16 @@ async function main(): Promise<void> {
     // array with slow tz calls) — only the current session matters for the trend call.
     const nF = upTo(niftyFive, iso).slice(-120), nFif = upTo(niftyFifteen, iso).slice(-120), nH1 = upTo(niftyH1, iso);
     const nD = niftyDaily.filter((b) => istDateOf(b.time) <= day);
-    const spyTrend5m = candleTrend(nF, 0.001); const spyTrend15m = candleTrend(nFif, 0.001);
+    const nifty50Trend5m = candleTrend(nF, 0.001); const nifty50Trend15m = candleTrend(nFif, 0.001);
     const nh = nH1.slice(-5);
-    const spyChangePct = nh.length >= 4 && nh[nh.length - 4].close > 0 ? (last(nh).close - nh[nh.length - 4].close) / nh[nh.length - 4].close : 0;
+    const nifty50ChangePct = nh.length >= 4 && nh[nh.length - 4].close > 0 ? (last(nh).close - nh[nh.length - 4].close) / nh[nh.length - 4].close : 0;
     const vixLevel = vixDaily.filter((b) => istDateOf(b.time) <= day).slice(-1)[0]?.close ?? null;
     const e200 = ema(closes(nD), 200);
-    const regime = classifyMarketRegime({ spyPrice: nD.length ? last(nD).close : null, spyEma200: e200.length >= 200 ? last(e200) : null, vixLevel });
+    const regime = classifyMarketRegime({ nifty50Price: nD.length ? last(nD).close : null, nifty50Ema200: e200.length >= 200 ? last(e200) : null, vixLevel });
 
     const candleSet: CandleSet = { '1m': oneS, '5m': fiveS, '15m': fifteenS, '1h': h1S, '1d': dailyS };
     const providerStatus = { provider: 'yahoo' as const, mode: 'live' as const, lastUpdated: iso, stale: false, ageSeconds: 0, message: 'bt' };
-    const row = buildRowFromAlpaca(SYM, meta, candleSet, providerStatus, 'none', {}, null, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, nD);
+    const row = buildRowFromAlpaca(SYM, meta, candleSet, providerStatus, 'none', {}, null, nifty50ChangePct, vixLevel, nifty50Trend5m, nifty50Trend15m, nD);
 
     nBars++;
     atrPcts.push(row.atrPct); rvols.push(meta.rvolEst); scores.push(row.score); dvols.push(row.turnoverCr);
@@ -143,7 +143,7 @@ async function main(): Promise<void> {
     if (!row.primaryStrategy || !regimeAllows(row.primaryStrategy.strategyId, regime.regime)) continue;
     const vixMult = vixLevel !== null && vixLevel > 30 ? 0 : vixLevel !== null && vixLevel > 20 ? 0.5 : 1;
     if (vixMult === 0) continue;
-    const t = buildPaperTrade(row, [], iso, 100_000, spyTrend5m, spyTrend15m, vixMult * regime.sizeMult);
+    const t = buildPaperTrade(row, [], iso, 100_000, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
     if (!t) continue;
     nTrade++;
   }

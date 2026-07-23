@@ -55,8 +55,8 @@ function RegimeCard({ regime, session }: { regime: MarketRegime; session: Tradin
       </div>
       <div className="flex gap-2">
         {[
-          { label: 'NIFTY', val: regime.spyPrice?.toFixed(2) || '--' },
-          { label: 'EMA 200', val: regime.spyEma200?.toFixed(2) || '--' },
+          { label: 'NIFTY', val: regime.nifty50Price?.toFixed(2) || '--' },
+          { label: 'EMA 200', val: regime.nifty50Ema200?.toFixed(2) || '--' },
           { label: 'VIX', val: regime.vixLevel?.toFixed(1) || '--', color: 'text-amber-400' },
           { label: 'SIZE', val: `${Math.round(regime.sizeMult * 100)}%`, color: 'text-emerald-400' },
         ].map((item) => (

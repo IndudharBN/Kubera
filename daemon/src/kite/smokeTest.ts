@@ -6,7 +6,7 @@
 
 import { ensureKiteLogin } from './kiteLogin';
 import { loadInstruments, getProfileName, getCandles, getQuotes } from './kiteClient';
-import { fetchSpyDailyBars } from './kiteData';
+import { fetchNifty50DailyBars } from './kiteData';
 
 const SYMS = ['RELIANCE', 'HDFCBANK', 'INFY'];
 
@@ -32,8 +32,8 @@ async function main(): Promise<void> {
     console.log(`4) 5m ${s.padEnd(9)} : ${bars.length} bars | last`, lastBar);
   }
 
-  const { spyBars, vixLevel } = await fetchSpyDailyBars();
-  console.log(`5) benchmark    : NIFTY daily bars=${spyBars.length}, India VIX=${vixLevel}`);
+  const { nifty50Bars, vixLevel } = await fetchNifty50DailyBars();
+  console.log(`5) benchmark    : NIFTY daily bars=${nifty50Bars.length}, India VIX=${vixLevel}`);
 
   console.log('=== ✓ all checks passed — data path is live (no orders placed) ===');
   process.exit(0);

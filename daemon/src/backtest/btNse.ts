@@ -292,18 +292,18 @@ async function main(): Promise<void> {
       // slow tz calls) — only the current session matters for the trend call.
       const nF = niftyFive.slice(Math.max(0, pNF - 120), pNF), nFif = niftyFifteen.slice(Math.max(0, pNFif - 120), pNFif), nH1 = niftyH1.slice(Math.max(0, pNH1 - 60), pNH1);
       const nD = niftyDaily.filter((_, idx) => niftyDailyIst[idx] <= day);
-      const spyTrend5m = candleTrend(nF, 0.001);
-      const spyTrend15m = candleTrend(nFif, 0.001);
+      const nifty50Trend5m = candleTrend(nF, 0.001);
+      const nifty50Trend15m = candleTrend(nFif, 0.001);
       const nh = nH1.slice(-5);
-      const spyChangePct = nh.length >= 4 && nh[nh.length - 4].close > 0 ? (last(nh).close - nh[nh.length - 4].close) / nh[nh.length - 4].close : 0;
+      const nifty50ChangePct = nh.length >= 4 && nh[nh.length - 4].close > 0 ? (last(nh).close - nh[nh.length - 4].close) / nh[nh.length - 4].close : 0;
       const vixLevel = vixDaily.filter((_, idx) => vixIst[idx] <= day).slice(-1)[0]?.close ?? null;
       const e200 = ema(closes(nD), 200);
-      const regime = classifyMarketRegime({ spyPrice: nD.length ? last(nD).close : null, spyEma200: e200.length >= 200 ? last(e200) : null, vixLevel });
+      const regime = classifyMarketRegime({ nifty50Price: nD.length ? last(nD).close : null, nifty50Ema200: e200.length >= 200 ? last(e200) : null, vixLevel });
 
       const candleSet: CandleSet = { '1m': oneS, '5m': fiveS, '15m': fifteenS, '1h': h1S, '1d': dailyS };
       const providerStatus = { provider: 'yahoo' as const, mode: 'live' as const, lastUpdated: iso, stale: false, ageSeconds: 0, message: 'bt' };
 
-      const row = buildRowFromAlpaca(sym, meta, candleSet, providerStatus, 'none', {}, null, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, nD);
+      const row = buildRowFromAlpaca(sym, meta, candleSet, providerStatus, 'none', {}, null, nifty50ChangePct, vixLevel, nifty50Trend5m, nifty50Trend15m, nD);
 
       // DIAG: one-shot dump of why bars fall out, to unblock "0 entries across the whole run".
       diagTotal++;
@@ -338,7 +338,7 @@ async function main(): Promise<void> {
         const dk = `${s.strategyId}|${day}`;
         if ((perStratDay.get(dk) ?? 0) >= 3) continue;
         const sigRow = { ...row, primaryStrategy: s, tradePlan: s.tradePlan, direction: s.direction };
-        const t = buildPaperTrade(sigRow, openTrades, iso, ACCOUNT, spyTrend5m, spyTrend15m, vixMult * regime.sizeMult);
+        const t = buildPaperTrade(sigRow, openTrades, iso, ACCOUNT, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
         if (!t) {
           if (diagBuildFailSample < 5) {
             diagBuildFailSample++;

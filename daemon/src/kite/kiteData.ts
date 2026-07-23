@@ -1,8 +1,8 @@
 // Kubera — Kite market-data provider (NSE).
 //
 // Implements the same surface proTradeScannerApi imports from alpacaClient, backed
-// by Kite. The benchmark sentinel 'SPY' is aliased to NIFTY 50 throughout, so the
-// engine's SPY references keep working without edits (renamed cosmetically later).
+// by Kite. The benchmark sentinel 'NIFTY50' is aliased to NIFTY 50 throughout, so the
+// engine's NIFTY50 references keep working without edits.
 //
 // Status: complete — candles, quotes, universe, benchmark/VIX, sector trends, and a
 // price-action catalyst are all live (nothing stubbed). Remaining tuning with creds:
@@ -17,7 +17,7 @@ import { getCandles, getCandlesByToken, getQuotes, getLtp, INDEX_TOKENS } from '
 import { nseSessionVolumeFraction } from '../nse';
 
 export const UNIVERSE_TARGET = 100;
-const BENCH = 'SPY'; // sentinel used by the engine → NIFTY 50 here
+const BENCH = 'NIFTY50'; // sentinel used by the engine → NIFTY 50 here
 
 // Tier-2 fallback seed: liquid large-caps used only when the Tier-1 NIFTY-500 list (below)
 // is unavailable, OR when it's available but yields < MIN_UNIVERSE_SYMBOLS passing candidates
@@ -86,12 +86,12 @@ export async function fetchYahooDailyBars(symbols: string[]): Promise<Record<str
   return out;
 }
 
-export async function fetchSpyDailyBars(): Promise<{ spyBars: Candle[]; vixLevel: number | null }> {
-  const [spyBars, vix] = await Promise.all([
+export async function fetchNifty50DailyBars(): Promise<{ nifty50Bars: Candle[]; vixLevel: number | null }> {
+  const [nifty50Bars, vix] = await Promise.all([
     dailyBars(BENCH),
     getLtp(['INDIA VIX']).then((m) => m['INDIA VIX'] ?? null).catch(() => null),
   ]);
-  return { spyBars, vixLevel: vix };
+  return { nifty50Bars, vixLevel: vix };
 }
 
 // ── intraday bars (short cache + throttle) ─────────────────────────────────────

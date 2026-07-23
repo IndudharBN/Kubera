@@ -121,8 +121,8 @@ export interface StrategyInput {
   score: number;
   earningsDays?: number | null;
   vixLevel?: number | null;
-  spyTrend5m?: 'UP' | 'DOWN' | 'FLAT';
-  spyTrend15m?: 'UP' | 'DOWN' | 'FLAT';
+  nifty50Trend5m?: 'UP' | 'DOWN' | 'FLAT';
+  nifty50Trend15m?: 'UP' | 'DOWN' | 'FLAT';
   dataStatus: MarketDataProviderStatus;
   candles: {
     one: Candle[];

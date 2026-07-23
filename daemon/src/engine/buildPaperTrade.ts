@@ -41,8 +41,8 @@ export function buildPaperTrade(
   currentTrades: PaperTrade[] = [],
   openedAt = new Date().toISOString(),
   accountBalance = 100_000,
-  spyTrend5m?: 'UP' | 'DOWN' | 'FLAT',
-  spyTrend15m?: 'UP' | 'DOWN' | 'FLAT',
+  nifty50Trend5m?: 'UP' | 'DOWN' | 'FLAT',
+  nifty50Trend15m?: 'UP' | 'DOWN' | 'FLAT',
   cbSizeMult = 1.0,
 ): PaperTrade | null {
   const plan = effectiveTradePlan(row);
@@ -55,8 +55,8 @@ export function buildPaperTrade(
 
   if (!isReversal) {
     const tradeDir = row.primaryStrategy?.direction ?? row.direction;
-    const t5 = spyTrend5m;
-    const t15 = spyTrend15m;
+    const t5 = nifty50Trend5m;
+    const t15 = nifty50Trend15m;
     const ok5m  = !t5  || t5  === 'FLAT' || (tradeDir === 'BULL' && t5  === 'UP') || (tradeDir === 'BEAR' && t5  === 'DOWN');
     const ok15m = !t15 || t15 === 'FLAT' || (tradeDir === 'BULL' && t15 === 'UP') || (tradeDir === 'BEAR' && t15 === 'DOWN');
     if (ok5m && ok15m) {

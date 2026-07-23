@@ -18,21 +18,21 @@ export const REGIME_ICON: Record<MarketRegimeName, string> = {
   BEAR: '!',
 };
 
-export function classifyMarketRegime(input: { spyPrice?: number | null; spyEma200?: number | null; vixLevel?: number | null; ts?: number }): MarketRegime {
-  const spyPrice = input.spyPrice ?? null;
-  const spyEma200 = input.spyEma200 ?? null;
+export function classifyMarketRegime(input: { nifty50Price?: number | null; nifty50Ema200?: number | null; vixLevel?: number | null; ts?: number }): MarketRegime {
+  const nifty50Price = input.nifty50Price ?? null;
+  const nifty50Ema200 = input.nifty50Ema200 ?? null;
   const vixLevel = input.vixLevel ?? null;
-  const spyAboveEma = spyPrice !== null && spyEma200 !== null ? spyPrice > spyEma200 : null;
+  const nifty50AboveEma = nifty50Price !== null && nifty50Ema200 !== null ? nifty50Price > nifty50Ema200 : null;
 
   let regime: MarketRegimeName = 'SIDEWAYS';
-  if (spyAboveEma === true && vixLevel !== null && vixLevel < 20) regime = 'BULL';
-  else if (spyAboveEma === false || (vixLevel !== null && vixLevel > 30)) regime = 'BEAR';
+  if (nifty50AboveEma === true && vixLevel !== null && vixLevel < 20) regime = 'BULL';
+  else if (nifty50AboveEma === false || (vixLevel !== null && vixLevel > 30)) regime = 'BEAR';
 
   return {
     regime,
-    spyPrice,
-    spyEma200,
-    spyAboveEma,
+    nifty50Price,
+    nifty50Ema200,
+    nifty50AboveEma,
     vixLevel,
     sizeMult: REGIME_MULT[regime],
     color: REGIME_COLOR[regime],

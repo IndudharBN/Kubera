@@ -1295,7 +1295,7 @@ function pmSetups(row: ProTradeRow): StrategyId[] {
   // S2 VWAP pullback: moderate gap on high-ATR liquid name
   if (gap >= 1 && row.atrPct >= 3 && row.rvol >= 1.2 && !setups.includes('orb_retest')) setups.push('vwap_pullback');
 
-  // S3 RS continuation: outpacing SPY premarket in the right direction
+  // S3 RS continuation: outpacing NIFTY premarket in the right direction
   if (bull && row.rsVsBenchmark >= 1.01 && row.gapPct >= 0.5) setups.push('rs_continuation');
   if (bear && row.rsVsBenchmark <= 0.99 && row.gapPct <= -0.5) setups.push('rs_continuation');
 
@@ -1503,7 +1503,7 @@ export function ProTradeScannerScreen() {
   const applyDaemonState = React.useCallback((state: Record<string, unknown>) => {
     if (state['rows']) {
       const rows = state['rows'] as ProTradeRow[];
-      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', spyTrend5m: (state['spyTrend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', spyTrend15m: (state['spyTrend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined } as ProTradeSnapshot);
+      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', nifty50Trend5m: (state['nifty50Trend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', nifty50Trend15m: (state['nifty50Trend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined } as ProTradeSnapshot);
     }
     if (state['universeFallback'] !== undefined) setUniverseFallback(state['universeFallback'] as boolean);
     if (state['trades']) setPaperTrades(state['trades'] as PaperTrade[]);
@@ -1568,10 +1568,10 @@ export function ProTradeScannerScreen() {
       }),
       daemonWs.on('disconnected', () => setDaemonOnline(false)),
       daemonWs.on('snapshot_update', (payload) => {
-        const p = payload as { rows: ProTradeRow[]; spyTrend5m: 'UP'|'DOWN'|'FLAT'; spyTrend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean; marketLive?: boolean; marketStatus?: string };
+        const p = payload as { rows: ProTradeRow[]; nifty50Trend5m: 'UP'|'DOWN'|'FLAT'; nifty50Trend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean; marketLive?: boolean; marketStatus?: string };
         const qCount = p.qualifiedCount ?? p.rows.filter(r => r.qualified).length;
         if (p.universeFallback !== undefined) setUniverseFallback(p.universeFallback);
-        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', spyTrend5m: p.spyTrend5m, spyTrend15m: p.spyTrend15m, regime: p.regime, marketLive: p.marketLive, marketStatus: p.marketStatus });
+        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', nifty50Trend5m: p.nifty50Trend5m, nifty50Trend15m: p.nifty50Trend15m, regime: p.regime, marketLive: p.marketLive, marketStatus: p.marketStatus });
         setLoading(false);
         setError('');
       }),
@@ -1880,7 +1880,7 @@ export function ProTradeScannerScreen() {
         const vixLevel = snapshot?.regime?.vixLevel;
         return (
           <div className="shrink-0 rounded-xl border border-white/5 bg-white/[0.025] px-4 py-3 space-y-3">
-            {/* Row 1: P&L · Record · Equity · SPY tide · VIX · Scan health */}
+            {/* Row 1: P&L · Record · Equity · NIFTY tide · VIX · Scan health */}
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Today P&L</p>
@@ -1911,12 +1911,12 @@ export function ProTradeScannerScreen() {
               <div>
                 <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">NIFTY Tide</p>
                 <p className="text-sm font-mono font-black leading-none">
-                  <span className={snapshot?.spyTrend5m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-400'}>
-                    5m {snapshot?.spyTrend5m ?? '--'}
+                  <span className={snapshot?.nifty50Trend5m === 'UP' ? 'text-emerald-400' : snapshot?.nifty50Trend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-400'}>
+                    5m {snapshot?.nifty50Trend5m ?? '--'}
                   </span>
                   <span className="text-slate-600 mx-1">·</span>
-                  <span className={snapshot?.spyTrend15m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend15m === 'DOWN' ? 'text-rose-400' : 'text-slate-400'}>
-                    15m {snapshot?.spyTrend15m ?? '--'}
+                  <span className={snapshot?.nifty50Trend15m === 'UP' ? 'text-emerald-400' : snapshot?.nifty50Trend15m === 'DOWN' ? 'text-rose-400' : 'text-slate-400'}>
+                    15m {snapshot?.nifty50Trend15m ?? '--'}
                   </span>
                 </p>
               </div>
@@ -2064,12 +2064,12 @@ export function ProTradeScannerScreen() {
               Auto refresh: {activeStage === 'forming' || activeStage === 'confirmed' || activeStage === 'locked' || activeStage === 'trade_ready' ? '15s hot set' : '60s'}
             </span>
             <span className="px-3 py-1 rounded-full border border-slate-600/40 text-slate-400 bg-slate-800/30">
-              NIFTY Tide: <span className={`font-black ${snapshot?.spyTrend5m === 'UP' ? 'text-emerald-400' : snapshot?.spyTrend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-300'}`}>{snapshot?.spyTrend5m || 'FLAT'}</span>
+              NIFTY Tide: <span className={`font-black ${snapshot?.nifty50Trend5m === 'UP' ? 'text-emerald-400' : snapshot?.nifty50Trend5m === 'DOWN' ? 'text-rose-400' : 'text-slate-300'}`}>{snapshot?.nifty50Trend5m || 'FLAT'}</span>
             </span>
             {snapshot?.regime && (
               <span className={`px-3 py-1 rounded-full border text-xs font-semibold ${snapshot.regime.regime === 'BULL' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : snapshot.regime.regime === 'BEAR' ? 'border-rose-500/40 bg-rose-500/10 text-rose-300' : 'border-amber-500/40 bg-amber-500/10 text-amber-300'}`}>
                 Regime: {snapshot.regime.regime}
-                {snapshot.regime.spyEma200 ? ` · NIFTY ${snapshot.regime.spyPrice?.toFixed(0)} / EMA200 ${snapshot.regime.spyEma200.toFixed(0)}` : ''}
+                {snapshot.regime.nifty50Ema200 ? ` · NIFTY ${snapshot.regime.nifty50Price?.toFixed(0)} / EMA200 ${snapshot.regime.nifty50Ema200.toFixed(0)}` : ''}
                 {snapshot.regime.vixLevel ? ` · VIX ${snapshot.regime.vixLevel.toFixed(1)}` : ''}
               </span>
             )}
@@ -2262,8 +2262,8 @@ export function ProTradeScannerScreen() {
 }
 function isTideBlocked(
   row: ProTradeRow,
-  spyTrend5m: 'UP' | 'DOWN' | 'FLAT' | undefined,
-  spyTrend15m: 'UP' | 'DOWN' | 'FLAT' | undefined,
+  nifty50Trend5m: 'UP' | 'DOWN' | 'FLAT' | undefined,
+  nifty50Trend15m: 'UP' | 'DOWN' | 'FLAT' | undefined,
   sig?: ProTradeRow['primaryStrategy'],
 ): boolean {
   if (!sig) return false;
@@ -2273,7 +2273,7 @@ function isTideBlocked(
   if (isReversal) return false;
 
   // S1 ORB: flat 5m tape → no directional context for a breakout
-  if (spyTrend5m === 'FLAT' && strategyId === 'orb_retest') return true;
+  if (nifty50Trend5m === 'FLAT' && strategyId === 'orb_retest') return true;
 
   // S2/S3: block only when BOTH tides oppose self-direction.
   // One tide opposing → reduce size (handled in buildPaperTrade).
@@ -2283,9 +2283,9 @@ function isTideBlocked(
     const tradeDir = sig.direction;
     if (tradeDir === 'NEUTRAL') return false;
     // If either tide is absent or flat, one-tide rule applies — don't block
-    if (!spyTrend5m || spyTrend5m === 'FLAT' || !spyTrend15m || spyTrend15m === 'FLAT') return false;
-    const counter5m = (tradeDir === 'BULL' && spyTrend5m === 'DOWN') || (tradeDir === 'BEAR' && spyTrend5m === 'UP');
-    const counter15m = (tradeDir === 'BULL' && spyTrend15m === 'DOWN') || (tradeDir === 'BEAR' && spyTrend15m === 'UP');
+    if (!nifty50Trend5m || nifty50Trend5m === 'FLAT' || !nifty50Trend15m || nifty50Trend15m === 'FLAT') return false;
+    const counter5m = (tradeDir === 'BULL' && nifty50Trend5m === 'DOWN') || (tradeDir === 'BEAR' && nifty50Trend5m === 'UP');
+    const counter15m = (tradeDir === 'BULL' && nifty50Trend15m === 'DOWN') || (tradeDir === 'BEAR' && nifty50Trend15m === 'UP');
     return counter5m && counter15m;
   }
 

@@ -105,28 +105,28 @@ function enforceMinStop(direction: 'BULL' | 'BEAR', entry: number, stop: number,
   return Number.isFinite(enforced) ? enforced : entry + minDist;
 }
 
-// SPY 5m tape check — for BREAKOUT strategies (S1, S3, S6, S7, S9).
+// NIFTY 5m tape check — for BREAKOUT strategies (S1, S3, S6, S7, S9).
 // Counter-tape breakout: fails checklist → stays 'forming', not auto-traded.
-function spyTapeCheck(input: StrategyInput): StrategyChecklistItem {
-  const spy5m = input.spyTrend5m;
-  if (!spy5m || spy5m === 'FLAT') return pass('SPY tape', 'Tape flat — no directional filter');
-  if (input.direction === 'NEUTRAL') return pass('SPY tape', 'Direction undetermined — no filter');
-  const aligned = input.direction === 'BULL' ? spy5m === 'UP' : spy5m === 'DOWN';
+function nifty50TapeCheck(input: StrategyInput): StrategyChecklistItem {
+  const nifty505m = input.nifty50Trend5m;
+  if (!nifty505m || nifty505m === 'FLAT') return pass('NIFTY tape', 'Tape flat — no directional filter');
+  if (input.direction === 'NEUTRAL') return pass('NIFTY tape', 'Direction undetermined — no filter');
+  const aligned = input.direction === 'BULL' ? nifty505m === 'UP' : nifty505m === 'DOWN';
   return aligned
-    ? pass('SPY tape', `SPY 5m ${spy5m} ✓ tape aligned with ${input.direction}`)
-    : fail('SPY tape', `SPY 5m ${spy5m} — counter-tape: environment opposes ${input.direction} breakout`);
+    ? pass('NIFTY tape', `NIFTY 5m ${nifty505m} ✓ tape aligned with ${input.direction}`)
+    : fail('NIFTY tape', `NIFTY 5m ${nifty505m} — counter-tape: environment opposes ${input.direction} breakout`);
 }
 
-// SPY 15m session check — for PULLBACK strategies (S2, S8) and zone strategies (S4, S5).
+// NIFTY 15m session check — for PULLBACK strategies (S2, S8) and zone strategies (S4, S5).
 // Pullback setups need the session to be going their way even though the 5m may dip (that's the pullback).
-function spySessionCheck(input: StrategyInput): StrategyChecklistItem {
-  const spy15m = input.spyTrend15m;
-  if (!spy15m || spy15m === 'FLAT') return pass('SPY session', 'Session neutral — no directional filter');
-  if (input.direction === 'NEUTRAL') return pass('SPY session', 'Direction undetermined — no filter');
-  const aligned = input.direction === 'BULL' ? spy15m === 'UP' : spy15m === 'DOWN';
+function nifty50SessionCheck(input: StrategyInput): StrategyChecklistItem {
+  const nifty5015m = input.nifty50Trend15m;
+  if (!nifty5015m || nifty5015m === 'FLAT') return pass('NIFTY session', 'Session neutral — no directional filter');
+  if (input.direction === 'NEUTRAL') return pass('NIFTY session', 'Direction undetermined — no filter');
+  const aligned = input.direction === 'BULL' ? nifty5015m === 'UP' : nifty5015m === 'DOWN';
   return aligned
-    ? pass('SPY session', `SPY 15m ${spy15m} ✓ session supports ${input.direction}`)
-    : fail('SPY session', `SPY 15m ${spy15m} — counter-session: hostile environment for ${input.direction} pullback`);
+    ? pass('NIFTY session', `NIFTY 15m ${nifty5015m} ✓ session supports ${input.direction}`)
+    : fail('NIFTY session', `NIFTY 15m ${nifty5015m} — counter-session: hostile environment for ${input.direction} pullback`);
 }
 
 // Previous day's high/low — kept as last-resort T2 fallback when no intraday pivot exists.
@@ -466,7 +466,7 @@ export function evaluateOrbRetest(input: StrategyInput): StrategySignal {
     pass('ADR room', `${adrExhausted(input.candles.five, input.atr20) ? '>80% ATR used — watch' : '< 80% ATR used ✓'} — informational`),
     pass('VWAP context', `${selfInput.vwapAligned ? 'VWAP ✓' : 'early session'} — informational`),
     ema1mCheck(input),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
   const sig = signal('orb_retest', selfInput, checklist, tradePlan, 'S1 ORB retest: self-determined direction from ORB break + retest + ORB width ≥0.5% + stop 1×ATR behind structural level. Hard gates: selfDir, confirmedBreak, retest, orbWidthOk, rvol.', false, range ? [{
     label: 'Opening Range',
@@ -531,7 +531,7 @@ export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
     : false;
   const rvolOk = input.rvol >= 0.8;
   const rsOk = input.rsVsBenchmark >= 1.0;
-  const rsLabel = `RS ${round(input.rsVsBenchmark, 4)} vs SPY${rsOk ? ' ✓' : ' — lagging'}`;
+  const rsLabel = `RS ${round(input.rsVsBenchmark, 4)} vs NIFTY${rsOk ? ' ✓' : ' — lagging'}`;
   const entry = input.price;
   // Stop anchored to VWAP — if price loses VWAP again the setup is wrong; swing low was too wide and arbitrary
   const rawStop = dir === 'BULL'
@@ -559,12 +559,12 @@ export function evaluateVwapPullback(input: StrategyInput): StrategySignal {
       : pass('5m trend aligned', `${selfInput.trend5m} — pullback phase, reclaim pending — informational`),
     rvolOk ? pass('RVOL ≥0.8×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥0.8×', `${round(input.rvol, 2)}× — dead-volume reclaims fail`),
     pass('VWAP context', `${selfInput.vwapAligned ? 'Above VWAP ✓' : 'Near VWAP'} — informational`),
-    rsOk ? pass('RS vs SPY ≥1.0×', rsLabel) : fail('RS vs SPY ≥1.0×', `${rsLabel} — laggard VWAP reclaims fail on strong SPY days`),
+    rsOk ? pass('RS vs NIFTY ≥1.0×', rsLabel) : fail('RS vs NIFTY ≥1.0×', `${rsLabel} — laggard VWAP reclaims fail on strong NIFTY days`),
     vwapSlopeOk
       ? pass('VWAP slope', `${round((vwapSlope ?? 0) * 100, 3)}% over 50m — directional session ✓`)
       : fail('VWAP slope', `VWAP flat (${round((vwapSlope ?? 0) * 100, 3)}%) — range session: pullback 50/50`),
     ema1mCheck(input),
-    spySessionCheck(selfInput),
+    nifty50SessionCheck(selfInput),
   ];
   return withProvisional(signal('vwap_pullback', selfInput, checklist, tradePlan, 'S2 VWAP pullback: slope ≥0.1% + VWAP touch + rejection wick ≥25% + VWAP reclaim + RVOL≥0.8 + RS≥1.0. Stop: VWAP−0.5×ATR. Hard gates: selfDir, touchedValue, wickOk, reclaimed (above VWAP), rvolOk, rsOk.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
@@ -582,7 +582,7 @@ export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
     : null;
   const breakout = selfDir !== null; // breakout IS the direction signal — no external direction needed
   const rsEdge = selfDir === 'BULL' ? input.rsVsBenchmark >= 1.005 : selfDir === 'BEAR' ? input.rsVsBenchmark <= 0.995 : false; // 0.5% RS edge
-  const rsLabel = `${round(input.rsVsBenchmark, 4)} vs SPY`;
+  const rsLabel = `${round(input.rsVsBenchmark, 4)} vs NIFTY`;
   const dir: 'BULL' | 'BEAR' = selfDir ?? 'BULL'; // geometry fallback; tradePlan is null when selfDir=null
   const selfInput = selfDir
     ? {
@@ -614,7 +614,7 @@ export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
     selfDir ? pass('Directional bias', `${selfDir} — self-determined from micro-range break`) : fail('Directional bias', 'No micro-range break — price inside range'),
     pass('15m trend', `${input.trend15m}${input.trend15mAligned ? ' ✓ aligned' : ' — context'} — informational`),
     pass('1H directional', `${trend1h} — macro bias`),
-    rsEdge ? pass('RS vs SPY ≥0.5%', `${rsLabel} ✓ leading edge`) : fail('RS vs SPY ≥0.5%', `${rsLabel} — need ≥0.5% RS edge vs SPY`),
+    rsEdge ? pass('RS vs NIFTY ≥0.5%', `${rsLabel} ✓ leading edge`) : fail('RS vs NIFTY ≥0.5%', `${rsLabel} — need ≥0.5% RS edge vs NIFTY`),
     pass('5m trend', `${selfInput.trend5m}${selfInput.trendAligned ? ' aligned ✓' : ' — pullback entry phase'} — informational`),
     breakout ? pass('Micro range break', 'Latest candle broke the local range') : fail('Micro range break', 'Waiting for micro breakout'),
     input.rvol >= 1.0 ? pass('RVOL ≥1.0×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥1.0×', `${round(input.rvol, 2)}× — breakout needs ≥1.0×`),
@@ -622,7 +622,7 @@ export function evaluateRsContinuation(input: StrategyInput): StrategySignal {
     stopWidthOk ? pass('Stop width ≤1.5%', `${round(stopWidthPct * 100, 2)}% ✓ micro-range tight`) : fail('Stop width ≤1.5%', `${round(stopWidthPct * 100, 2)}% — macro swing, not a micro range; skip`),
     pass('VWAP context', `${selfInput.vwapAligned ? 'VWAP ✓' : 'VWAP (below — watch for reclaim)'} — informational`),
     ema1mCheck(input),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
   return withProvisional(signal('rs_continuation', selfInput, checklist, tradePlan, 'S3 RS continuation: micro range break + RS≥0.5% + RVOL≥1.0 + stop ≤1.5%. Hard gates: breakout (self-determines direction), rsEdge, rvol, stopSide, stopWidthOk.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
@@ -762,7 +762,7 @@ export function evaluateLiquiditySweep(input: StrategyInput): StrategySignal {
       ? pass('15m trend not opposed', `15m ${input.trend15m} — sweep is a stop-hunt, not the next trend leg`)
       : fail('15m trend not opposed', `15m ${input.trend15m} against a ${dir} sweep — fading a trending 15m is the losing pattern (0/8 live)`),
     ema1mCheck(input),
-    spySessionCheck(selfInput),
+    nifty50SessionCheck(selfInput),
   ];
   return withProvisional(signal('liquidity_sweep', selfInput, checklist, tradePlan, `S4 Sweep (${sweepSource ?? 'no level'}): T1=${orOpposite ? 'OR opposite' : '2R'} T2=${orOpposite ? round(orOpposite, 2) : '2.5R'}`), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
@@ -873,7 +873,7 @@ export function evaluateObFvgRetest(input: StrategyInput): StrategySignal {
     pass('RTH bars', `${rthBars} bars${rthBars >= 5 ? ' ✓' : ' — early session'} — informational`),
     pass('ADR room', `${adrExhausted(input.candles.five, input.atr20) ? '>80% ATR used — watch' : '< 80% ATR used ✓'} — informational`),
     ema1mCheck(input),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
   const sig = signal('ob_fvg_retest', selfInput, checklist, tradePlan, 'S5: OB or FVG retest. Hard gates: OB needs rejection candle + RVOL≥1.0×; FVG solo needs 15m trend aligned + RVOL≥1.5× + gap ≥ 0.25×ATR; both blocked after 15:00 ET.');
   return { ...withProvisional(sig, planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)), enginePath: (atOb ? 'ob' : atFvg ? 'fvg' : undefined) as StrategySignal['enginePath'] };
@@ -936,7 +936,7 @@ export function evaluateMssBreakout(input: StrategyInput): StrategySignal {
     pass('VWAP context', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above VWAP ✓' : 'Below VWAP ✓') : 'VWAP side mismatch — watch'} — informational`),
     volOk ? pass('RVOL', `${round(input.rvol, 2)}× ✓`) : fail('RVOL', `${round(input.rvol, 2)}× — below 0.8 minimum for structural break`),
     ema1mCheck(input),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
   return withProvisional(signal('mss_breakout', selfInput, checklist, tradePlan, 'S6 MSS: structural break + clear path. Hard gates: mssOk (self-determines direction), bar2Ok (0.8×ATR), zoneBlocked (1×ATR), RVOL≥0.8.'), planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger));
 }
@@ -1002,7 +1002,7 @@ function checkS7VolumeSurge(input: StrategyInput): StrategySignal | null {
     pass('RVOL', `${round(input.rvol, 2)}× — informational (2× bar surge is the primary volume gate)`),
     selfInput.vwapAligned ? pass('VWAP aligned', `${dir === 'BULL' ? 'Above VWAP ✓' : 'Below VWAP ✓'}`) : fail('VWAP aligned', `${dir === 'BULL' ? 'Below VWAP' : 'Above VWAP'} — surge against session anchor`),
     pass('ADR room', `${!adrExhausted(input.candles.five, input.atr20) ? '< 80% ATR used ✓' : '>80% ATR used — watch sizing'} — informational`),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
   return withProvisional(signal('s7_volume_surge', selfInput, checklist, tradePlan, 'S7: Institutional 2× volume surge on 30m range break. Hard gates: volSpike (2× projected bar volume), selfDir (range break). RVOL informational — 2× surge implies session activity.'), planFromLevelsT1T2(selfInput, price, stop, t1, t2, bar));
 }
@@ -1096,7 +1096,7 @@ export function evaluateEma20Bounce(input: StrategyInput): StrategySignal {
     bounceStrong ? pass('Bounce conviction', `Reclaim bar body ≥50% — defended bounce ✓`) : fail('Bounce conviction', 'Weak reclaim bar (wick-through) — no conviction'),
     rvolOk ? pass('RVOL ≥1.2×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥1.2×', `${round(input.rvol, 2)}× — 5m EMA bounce in weak volume is chop (India-tuned)`),
     ema1mCheck(input),
-    spySessionCheck(selfInput),
+    nifty50SessionCheck(selfInput),
   ];
 
   return withProvisional(signal('ema20_bounce', selfInput, checklist, tradePlan,
@@ -1168,7 +1168,7 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
     htfTrendContext(selfInput),
     pass('VWAP context', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above VWAP ✓' : 'Below VWAP ✓') : 'VWAP misaligned — watch'} — informational`),
     ema1mCheck(input),
-    spyTapeCheck(selfInput),
+    nifty50TapeCheck(selfInput),
   ];
 
   return withProvisional(signal('flag_break', selfInput, checklist, tradePlan,
@@ -1260,7 +1260,7 @@ export function evaluateOrb15mRetest(input: StrategyInput): StrategySignal {
       : fail('R:R ≥2.0', `${round(computedRR, 2)} — insufficient reward vs 1×ATR buffer stop`),
     htfTrendContext(selfInput),
     pass('VWAP context', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above ✓' : 'Below ✓') : 'misaligned'} — informational`),
-    spySessionCheck(selfInput),
+    nifty50SessionCheck(selfInput),
   ];
 
   return withProvisional(signal(
@@ -1332,7 +1332,7 @@ export function evaluateVwap15mPullback(input: StrategyInput): StrategySignal {
     htfTrendContext(selfInput),
     touchedVwap ? pass('15m VWAP test', 'Within 60m on 15m chart') : fail('15m VWAP test', 'No 15m VWAP test in last 60m'),
     reclaimed ? pass('VWAP reclaim', `15m close ${dir === 'BULL' ? 'above' : 'below'} VWAP ✓`) : fail('VWAP reclaim', 'Waiting for 15m close back through VWAP'),
-    rsOk ? pass('RS vs SPY ≥0.5%', `${round(input.rsVsBenchmark, 4)} ✓`) : fail('RS vs SPY ≥0.5%', `${round(input.rsVsBenchmark, 4)} — 15m reclaim requires RS edge`),
+    rsOk ? pass('RS vs NIFTY ≥0.5%', `${round(input.rsVsBenchmark, 4)} ✓`) : fail('RS vs NIFTY ≥0.5%', `${round(input.rsVsBenchmark, 4)} — 15m reclaim requires RS edge`),
     rvolOk ? pass('RVOL ≥1.0×', `${round(input.rvol, 2)}× ✓`) : fail('RVOL ≥1.0×', `${round(input.rvol, 2)}× — low-volume 15m reclaim unreliable`),
     adrOk ? pass('ADR ≥2.5%', `${round(input.atrPct, 1)}% ✓`) : fail('ADR ≥2.5%', `${round(input.atrPct, 1)}% — 15m needs ≥2.5% range`),
     rrOk ? pass('R:R ≥2.0', '✓') : fail('R:R ≥2.0', 'Reward insufficient vs 1×ATR stop'),
@@ -1421,7 +1421,7 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
 // SIDEWAYS-optimised strategy: price tests the 30-min session range extreme,
 // shows a 30%+ rejection wick, and the R:R to VWAP (mean-reversion target) is ≥1.5.
 // Direction is driven by WHERE price is — BULL at range low, BEAR at range high.
-// SPY FLAT context is informational; the geometry itself self-selects SIDEWAYS days.
+// NIFTY FLAT context is informational; the geometry itself self-selects SIDEWAYS days.
 // Hard gates: selfDir (range extreme), rangeOk, atExtreme, wickOk, rvolOk, rrOk.
 export function evaluateRangeBoundReversion(input: StrategyInput): StrategySignal {
   const five = input.candles.five;
@@ -1496,9 +1496,9 @@ export function evaluateRangeBoundReversion(input: StrategyInput): StrategySigna
     rrOk
       ? pass('R:R ≥1.5 to VWAP', `${round(rrToVwap, 2)} ✓ — VWAP ${round(input.vwap, 2)}`)
       : fail('R:R ≥1.5 to VWAP', `${round(rrToVwap, 2)} — VWAP too close, no edge`),
-    input.spyTrend5m === 'FLAT'
-      ? pass('SPY FLAT context', 'Range-bound session ✓ — ideal for S13')
-      : pass('SPY tide', `${input.spyTrend5m ?? 'unknown'} — S13 works best on FLAT SPY days`),
+    input.nifty50Trend5m === 'FLAT'
+      ? pass('NIFTY FLAT context', 'Range-bound session ✓ — ideal for S13')
+      : pass('NIFTY tide', `${input.nifty50Trend5m ?? 'unknown'} — S13 works best on FLAT NIFTY days`),
     pass('VWAP target', `${round(input.vwap, 2)} — T1 scale-out; hold 50% to 2R if trend continues`),
   ];
 
@@ -1635,7 +1635,7 @@ export function evaluateSniper1m(input: StrategyInput): StrategySignal {
       : fail('R:R ≥2.0', `${round(computedRR, 2)} — 1m zone too close to entry`),
     htfTrendContext(selfInput),
     pass('VWAP context', `${selfInput.vwapAligned ? (dir === 'BULL' ? 'Above ✓' : 'Below ✓') : 'misaligned'} — informational`),
-    spySessionCheck(selfInput),
+    nifty50SessionCheck(selfInput),
   ];
 
   return withProvisional(signal(

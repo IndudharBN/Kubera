@@ -1,4 +1,4 @@
-import { fetchBars, fetchYahooDailyBars, fetchUniverseMeta, buildCandleSet, selectTopSymbols, fetchNewsFlags, fetchSectorTrends, fetchSpyDailyBars, buildDynamicUniverse, clearUniverseCache, getUniverseBuiltAt, SYMBOL_SECTOR, UNIVERSE_TARGET, type CatalystTier } from '../marketData';
+import { fetchBars, fetchYahooDailyBars, fetchUniverseMeta, buildCandleSet, selectTopSymbols, fetchNewsFlags, fetchSectorTrends, fetchNifty50DailyBars, buildDynamicUniverse, clearUniverseCache, getUniverseBuiltAt, SYMBOL_SECTOR, UNIVERSE_TARGET, type CatalystTier } from '../marketData';
 import { classifyMarketRegime } from './marketRegimeLogic';
 import type { MarketRegime } from './marketRegimeTypes';
 import type { SymbolMeta } from '../marketData';
@@ -105,8 +105,8 @@ export interface ProTradeSnapshot {
   fetchedAt: string;
   universeBuiltAt: string | null;
   providerStatus: string;
-  spyTrend5m: 'UP' | 'DOWN' | 'FLAT';
-  spyTrend15m: 'UP' | 'DOWN' | 'FLAT';
+  nifty50Trend5m: 'UP' | 'DOWN' | 'FLAT';
+  nifty50Trend15m: 'UP' | 'DOWN' | 'FLAT';
   regime: MarketRegime;
   marketLive: boolean;   // ground truth: is NSE actually trading right now (data-fresh)?
   marketStatus: string;  // human reason: "Market open" | "NSE holiday — Muharram" | "Pre-market" | …
@@ -137,7 +137,7 @@ export function computeMarketStatus(rows: ProTradeRow[]): { marketLive: boolean;
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // minVwapDist: minimum fractional distance from session VWAP before calling UP/DOWN.
-// Use 0.001 (10bps) for SPY to prevent flip-flopping on a choppy tape.
+// Use 0.001 (10bps) for NIFTY50 to prevent flip-flopping on a choppy tape.
 // Use 0 (default) for individual stocks — they need finer-grained trend calls.
 export function candleTrend(candles: Candle[], minVwapDist = 0) {
   if (candles.length < 2) return 'FLAT' as const;
@@ -197,7 +197,7 @@ export function candleTrend(candles: Candle[], minVwapDist = 0) {
 
   const distFromVwap = svwap > 0 ? (currentPrice - svwap) / svwap : 0;
 
-  // Noise floor: caller can require minimum VWAP distance (e.g. 10bps for SPY)
+  // Noise floor: caller can require minimum VWAP distance (e.g. 10bps for NIFTY50)
   if (Math.abs(distFromVwap) < minVwapDist) return 'FLAT' as const;
 
   // Lead signal: distance confirmed + slope agrees
@@ -255,7 +255,7 @@ function computePremarket(one: Candle[]): { high: number; low: number; volume: n
   };
 }
 
-function computeRsVsBenchmark(h1: Candle[], spyChangePct: number): number {
+function computeRsVsBenchmark(h1: Candle[], nifty50ChangePct: number): number {
   if (h1.length < 2) return 1;
   // 3-bar rolling window (≈3h) — single bar was too noisy; sustained RS leaders
   // hold their edge across multiple bars, not just the latest candle
@@ -264,7 +264,7 @@ function computeRsVsBenchmark(h1: Candle[], spyChangePct: number): number {
   const baseClose = h1[h1.length - 1 - window].close;
   if (baseClose <= 0) return 1;
   const stockChangePct = (lastClose - baseClose) / baseClose;
-  return 1 + (stockChangePct - spyChangePct);
+  return 1 + (stockChangePct - nifty50ChangePct);
 }
 
 function scoreRow(input: {
@@ -345,11 +345,11 @@ export function buildRowFromAlpaca(
   catalyst: CatalystTier,
   sectorTrends: Record<string, 'UP' | 'DOWN' | 'FLAT'>,
   earningsDays: number | null,
-  spyChangePct: number,
+  nifty50ChangePct: number,
   vixLevel?: number | null,
-  spyTrend5m?: 'UP' | 'DOWN' | 'FLAT',
-  spyTrend15m?: 'UP' | 'DOWN' | 'FLAT',
-  spyDailyBars?: Candle[],
+  nifty50Trend5m?: 'UP' | 'DOWN' | 'FLAT',
+  nifty50Trend15m?: 'UP' | 'DOWN' | 'FLAT',
+  nifty50DailyBars?: Candle[],
 ): ProTradeRow {
   const allOne = (candleSet['1m'] || []);
   const one = allOne.slice(-120);
@@ -398,7 +398,7 @@ export function buildRowFromAlpaca(
   const sectorTrend = sectorEtf ? sectorTrends[sectorEtf] : undefined;
   const sectorAligned = direction === 'BULL' ? sectorTrend === 'UP' : direction === 'BEAR' ? sectorTrend === 'DOWN' : false;
 
-  const rsVsBenchmark = computeRsVsBenchmark(h1, spyChangePct);
+  const rsVsBenchmark = computeRsVsBenchmark(h1, nifty50ChangePct);
 
   const prevDay = computePrevDay(daily);
   const premarket = computePremarket(allOne);
@@ -443,8 +443,8 @@ export function buildRowFromAlpaca(
     trend15mAligned,
     earningsDays,
     vixLevel,
-    spyTrend5m,
-    spyTrend15m,
+    nifty50Trend5m,
+    nifty50Trend15m,
     dataStatus: providerStatus,
     candles,
   });
@@ -484,7 +484,7 @@ export function buildRowFromAlpaca(
     mktCapB: null,
     sharesOutstanding: getFloatFromCache(symbol),
     catalyst,
-    beta: spyDailyBars?.length ? computeBeta(daily, spyDailyBars) : 1.0,
+    beta: nifty50DailyBars?.length ? computeBeta(daily, nifty50DailyBars) : 1.0,
     betaMax: 2.8,
     rsVsBenchmark: round(rsVsBenchmark, 3),
     basePass,
@@ -526,7 +526,7 @@ export { clearUniverseCache };
 export async function fetchHotSetSnapshot(symbols: string[]): Promise<ProTradeRow[]> {
   if (!symbols.length) return [];
   const metas = await fetchUniverseMeta(symbols);
-  const [bars1m, bars5m, bars15m, bars1h, bars1d, sectorTrends, newsFlags, spy5mBars, spy15mBars, spyH1Bars, spyRegimeData] = await Promise.all([
+  const [bars1m, bars5m, bars15m, bars1h, bars1d, sectorTrends, newsFlags, nifty505mBars, nifty5015mBars, nifty50H1Bars, nifty50RegimeData] = await Promise.all([
     fetchBars(symbols, '1m'),
     fetchBars(symbols, '5m'),
     fetchBars(symbols, '15m'),
@@ -534,19 +534,19 @@ export async function fetchHotSetSnapshot(symbols: string[]): Promise<ProTradeRo
     fetchYahooDailyBars(symbols),
     fetchSectorTrends(),
     fetchNewsFlags(symbols),
-    fetchBars(['SPY'], '5m'),
-    fetchBars(['SPY'], '15m'),
-    fetchBars(['SPY'], '1h'),
-    fetchSpyDailyBars(),
+    fetchBars(['NIFTY50'], '5m'),
+    fetchBars(['NIFTY50'], '15m'),
+    fetchBars(['NIFTY50'], '1h'),
+    fetchNifty50DailyBars(),
   ]);
-  const spyTrend5m = candleTrend(spy5mBars['SPY'] || [], 0.001);
-  const spyTrend15m = candleTrend(spy15mBars['SPY'] || [], 0.001);
-  const vixLevel = spyRegimeData.vixLevel;
-  // 3-bar rolling SPY change — matches computeRsVsBenchmark window; was hardcoded 0 in caller
-  const spyH1 = (spyH1Bars['SPY'] || []).slice(-5);
-  const spyLast = spyH1.length >= 2 ? spyH1[spyH1.length - 1].close : 0;
-  const spyBase = spyH1.length >= 4 ? spyH1[spyH1.length - 4].close : (spyH1.length >= 2 ? spyH1[spyH1.length - 2].close : spyLast);
-  const spyChangePct = spyBase > 0 ? (spyLast - spyBase) / spyBase : 0;
+  const nifty50Trend5m = candleTrend(nifty505mBars['NIFTY50'] || [], 0.001);
+  const nifty50Trend15m = candleTrend(nifty5015mBars['NIFTY50'] || [], 0.001);
+  const vixLevel = nifty50RegimeData.vixLevel;
+  // 3-bar rolling NIFTY50 change — matches computeRsVsBenchmark window; was hardcoded 0 in caller
+  const nifty50H1 = (nifty50H1Bars['NIFTY50'] || []).slice(-5);
+  const nifty50Last = nifty50H1.length >= 2 ? nifty50H1[nifty50H1.length - 1].close : 0;
+  const nifty50Base = nifty50H1.length >= 4 ? nifty50H1[nifty50H1.length - 4].close : (nifty50H1.length >= 2 ? nifty50H1[nifty50H1.length - 2].close : nifty50Last);
+  const nifty50ChangePct = nifty50Base > 0 ? (nifty50Last - nifty50Base) / nifty50Base : 0;
   const fetchedAt = new Date().toISOString();
   const providerStatus = dataProviderStatus(fetchedAt);
   const metaMap = new Map(metas.map((m) => [m.symbol, m]));
@@ -555,7 +555,7 @@ export async function fetchHotSetSnapshot(symbols: string[]): Promise<ProTradeRo
     if (!meta) return [];
     const candleSet = buildCandleSet(sym, { '1m': bars1m, '5m': bars5m, '15m': bars15m, '1h': bars1h, '1d': bars1d });
     const earningsDays = getEarningsDays(sym);
-    return [buildRowFromAlpaca(sym, meta, candleSet, providerStatus, newsFlags[sym] ?? 'none', sectorTrends, earningsDays, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, spyRegimeData.spyBars)];
+    return [buildRowFromAlpaca(sym, meta, candleSet, providerStatus, newsFlags[sym] ?? 'none', sectorTrends, earningsDays, nifty50ChangePct, vixLevel, nifty50Trend5m, nifty50Trend15m, nifty50RegimeData.nifty50Bars)];
   });
 }
 
@@ -580,7 +580,7 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
   // Guarantee pinned watchlist symbols are always scanned regardless of score rank
   const top = [...new Set([...scored, ...pinnedSymbols])];
 
-  const [bars1m, bars5m, bars15m, bars1h, bars1d, newsFlags, sectorTrends, spyBars, spyRegimeData, spy5mBars, spy15mBars] = await Promise.all([
+  const [bars1m, bars5m, bars15m, bars1h, bars1d, newsFlags, sectorTrends, nifty50Bars, nifty50RegimeData, nifty505mBars, nifty5015mBars] = await Promise.all([
     fetchBars(top, '1m'),
     fetchBars(top, '5m'),
     fetchBars(top, '15m'),
@@ -588,32 +588,32 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
     fetchYahooDailyBars(top),
     fetchNewsFlags(top),
     fetchSectorTrends(),
-    fetchBars(['SPY'], '1h'),
-    fetchSpyDailyBars(),
-    fetchBars(['SPY'], '5m'),
-    fetchBars(['SPY'], '15m'),
+    fetchBars(['NIFTY50'], '1h'),
+    fetchNifty50DailyBars(),
+    fetchBars(['NIFTY50'], '5m'),
+    fetchBars(['NIFTY50'], '15m'),
   ]);
 
   // Warm float cache in background — earnings already pre-warmed above
   void fetchSharesOutstanding(top);
 
-  // Compute SPY 3-bar rolling change — matches computeRsVsBenchmark window=3
-  const spyH1 = (spyBars['SPY'] || []).slice(-5);
-  const spyLast = spyH1.length >= 2 ? spyH1[spyH1.length - 1].close : 0;
-  const spyBase = spyH1.length >= 4 ? spyH1[spyH1.length - 4].close : (spyH1.length >= 2 ? spyH1[spyH1.length - 2].close : spyLast);
-  const spyChangePct = spyBase > 0 ? (spyLast - spyBase) / spyBase : 0;
+  // Compute NIFTY50 3-bar rolling change — matches computeRsVsBenchmark window=3
+  const nifty50H1 = (nifty50Bars['NIFTY50'] || []).slice(-5);
+  const nifty50Last = nifty50H1.length >= 2 ? nifty50H1[nifty50H1.length - 1].close : 0;
+  const nifty50Base = nifty50H1.length >= 4 ? nifty50H1[nifty50H1.length - 4].close : (nifty50H1.length >= 2 ? nifty50H1[nifty50H1.length - 2].close : nifty50Last);
+  const nifty50ChangePct = nifty50Base > 0 ? (nifty50Last - nifty50Base) / nifty50Base : 0;
 
-  const spy5m = (spy5mBars['SPY'] || []);
-  const spyTrend5m = candleTrend(spy5m, 0.001);
-  const spyTrend15m = candleTrend(spy15mBars['SPY'] || [], 0.001);
+  const nifty505m = (nifty505mBars['NIFTY50'] || []);
+  const nifty50Trend5m = candleTrend(nifty505m, 0.001);
+  const nifty50Trend15m = candleTrend(nifty5015mBars['NIFTY50'] || [], 0.001);
 
-  // Macro regime: SPY EMA200 (daily) + VIX
-  const spyDailyCloses = spyRegimeData.spyBars.map((c) => c.close);
-  const spyEma200Series = ema(spyDailyCloses, 200);
-  const spyEma200 = spyEma200Series.length >= 200 ? last(spyEma200Series) : null;
-  const spyDailyPrice = spyRegimeData.spyBars.length ? last(spyRegimeData.spyBars).close : null;
-  const vixLevel = spyRegimeData.vixLevel;
-  const regime = classifyMarketRegime({ spyPrice: spyDailyPrice, spyEma200, vixLevel });
+  // Macro regime: NIFTY50 EMA200 (daily) + VIX
+  const nifty50DailyCloses = nifty50RegimeData.nifty50Bars.map((c) => c.close);
+  const nifty50Ema200Series = ema(nifty50DailyCloses, 200);
+  const nifty50Ema200 = nifty50Ema200Series.length >= 200 ? last(nifty50Ema200Series) : null;
+  const nifty50DailyPrice = nifty50RegimeData.nifty50Bars.length ? last(nifty50RegimeData.nifty50Bars).close : null;
+  const vixLevel = nifty50RegimeData.vixLevel;
+  const regime = classifyMarketRegime({ nifty50Price: nifty50DailyPrice, nifty50Ema200, vixLevel });
 
   const fetchedAt = new Date().toISOString();
   const providerStatus = dataProviderStatus(fetchedAt);
@@ -625,7 +625,7 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
       if (!meta) return [];
       const candleSet = buildCandleSet(sym, { '1m': bars1m, '5m': bars5m, '15m': bars15m, '1h': bars1h, '1d': bars1d });
       const earningsDays = getEarningsDays(sym);
-      return [buildRowFromAlpaca(sym, meta, candleSet, providerStatus, newsFlags[sym] ?? 'none', sectorTrends, earningsDays, spyChangePct, vixLevel, spyTrend5m, spyTrend15m, spyRegimeData.spyBars)];
+      return [buildRowFromAlpaca(sym, meta, candleSet, providerStatus, newsFlags[sym] ?? 'none', sectorTrends, earningsDays, nifty50ChangePct, vixLevel, nifty50Trend5m, nifty50Trend15m, nifty50RegimeData.nifty50Bars)];
     })
     .sort((a, b) => b.confidence - a.confidence || b.score - a.score);
 
@@ -640,8 +640,8 @@ export async function fetchProTradeScannerSnapshot(pinnedSymbols: string[] = [])
     fetchedAt,
     universeBuiltAt: getUniverseBuiltAt(),
     providerStatus: `Alpaca IEX • ${top.length} symbols`,
-    spyTrend5m,
-    spyTrend15m,
+    nifty50Trend5m,
+    nifty50Trend15m,
     regime,
     ...computeMarketStatus(rows),
   };
