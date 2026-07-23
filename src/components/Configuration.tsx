@@ -57,10 +57,14 @@ function toETDate(iso: string): string {
 
 function usePaperStats() {
   const [trades, setTrades] = React.useState<PaperTradeRecord[]>([]);
+  const [disabledStrategies, setDisabledStrategies] = React.useState<string[]>([]);
   React.useEffect(() => {
     daemonClient.getTrades()
       .then((merged) => setTrades(Array.isArray(merged) ? merged as PaperTradeRecord[] : []))
       .catch(() => setTrades([]));
+    daemonClient.getRiskSettings()
+      .then((s) => setDisabledStrategies(s.disabledStrategies ?? []))
+      .catch(() => setDisabledStrategies([]));
   }, []);
 
   // Win = structural target/T1, OR a green day-close (EOD flat that finished net-positive after costs).
@@ -85,7 +89,7 @@ function usePaperStats() {
     const sp = sc.reduce((s, t) => s + (t.pnl ?? 0), 0);
     const sw = sc.filter(isWin).length;
     const sl = sc.filter(isLoss).length;
-    return { id: sid, code: STRATEGY_CODES[sid], name: STRATEGY_LABELS[sid], trades: sc.length, wins: sw, losses: sl, pnl: sp };
+    return { id: sid, code: STRATEGY_CODES[sid], name: STRATEGY_LABELS[sid], trades: sc.length, wins: sw, losses: sl, pnl: sp, disabled: disabledStrategies.includes(sid) };
   });
 
   const recentTrades = [...closed].sort((a, b) => (b.closedAt ?? '').localeCompare(a.closedAt ?? '')).slice(0, 10);
@@ -529,6 +533,7 @@ export function PerformanceScreen() {
                 <thead className="text-[9px] uppercase text-slate-500 font-bold tracking-widest bg-white/5">
                   <tr>
                     <th className="py-2 px-3">Strategy</th>
+                    <th className="py-2 px-3">Status</th>
                     <th className="py-2 px-3 text-right">Trades</th>
                     <th className="py-2 px-3 text-right">W</th>
                     <th className="py-2 px-3 text-right">L</th>
@@ -538,11 +543,16 @@ export function PerformanceScreen() {
                 </thead>
                 <tbody className="text-[11px] font-mono">
                   {stats.byStrategy.map((s) => (
-                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                    <tr key={s.id} className={`border-b border-white/5 hover:bg-white/5 ${s.disabled ? 'opacity-50' : ''}`}>
                       <td className="py-3 px-3">
                         <span className="inline-flex items-center gap-2">
                           <span className="text-[9px] font-black text-indigo-400 border border-indigo-400/40 bg-indigo-500/10 px-1.5 py-0.5 rounded">{s.code}</span>
                           <span className="text-slate-300">{s.name}</span>
+                        </span>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded border ${s.disabled ? 'text-slate-500 border-slate-600/40 bg-slate-800/30' : 'text-emerald-400 border-emerald-400/30 bg-emerald-500/10'}`}>
+                          {s.disabled ? 'Disabled' : 'Active'}
                         </span>
                       </td>
                       <td className="py-3 px-3 text-right text-slate-300">{s.trades}</td>
