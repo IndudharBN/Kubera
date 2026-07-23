@@ -81,7 +81,10 @@ export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   //   liquidity_sweep — 36 trades, 36.1% WR, -₹1,065.64 all-time (worst strategy by gross ₹); 3 of the
   //   book's 5 worst single trades. All-time PF is 1.05 (near-breakeven) with liquidity_sweep in the
   //   mix; removing it alone would flip several red days green. Disabled 2026-07-23, evidence-based.
-  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce', 'liquidity_sweep'],
+  //   sniper_1m — 11 trades, 36.4% WR, -₹196 all-time; same avgW<avgL signature as liquidity_sweep,
+  //   consistent across ~3 weeks (not a one-day blip). Small sample, but the pattern held through the
+  //   Jul-22/23 trades too. Disabled 2026-07-23, evidence-based.
+  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce', 'liquidity_sweep', 'sniper_1m'],
   sizeMultiplier: 2.0,       // 2× sizing — backtest: ~0.9%/day @ ~1.8% maxDD (live ~0.5-0.7% after caps/slippage)
   deployCapPct: 0.80,        // ≤80% of capital deployed
   dailyProfitHalfPct: 0.02,  // +2% → half size
