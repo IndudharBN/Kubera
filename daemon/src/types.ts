@@ -78,7 +78,10 @@ export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   //   vwap_pullback   — 33% WR, broken.        s7_volume_surge — 34% WR, no edge.
   //   rs_continuation — never fires (scout).   range_reversion — never fires (setup unmet).
   //   mss_breakout    — 46% WR even on movers.  ema20_bounce(5m) — 48% WR; the 15m variant works, 5m too noisy.
-  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce'],
+  //   liquidity_sweep — 36 trades, 36.1% WR, -₹1,065.64 all-time (worst strategy by gross ₹); 3 of the
+  //   book's 5 worst single trades. All-time PF is 1.05 (near-breakeven) with liquidity_sweep in the
+  //   mix; removing it alone would flip several red days green. Disabled 2026-07-23, evidence-based.
+  disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce', 'liquidity_sweep'],
   sizeMultiplier: 2.0,       // 2× sizing — backtest: ~0.9%/day @ ~1.8% maxDD (live ~0.5-0.7% after caps/slippage)
   deployCapPct: 0.80,        // ≤80% of capital deployed
   dailyProfitHalfPct: 0.02,  // +2% → half size
