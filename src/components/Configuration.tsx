@@ -59,12 +59,21 @@ function usePaperStats() {
   const [trades, setTrades] = React.useState<PaperTradeRecord[]>([]);
   const [disabledStrategies, setDisabledStrategies] = React.useState<string[]>([]);
   React.useEffect(() => {
-    daemonClient.getTrades()
-      .then((merged) => setTrades(Array.isArray(merged) ? merged as PaperTradeRecord[] : []))
-      .catch(() => setTrades([]));
-    daemonClient.getRiskSettings()
-      .then((s) => setDisabledStrategies(s.disabledStrategies ?? []))
-      .catch(() => setDisabledStrategies([]));
+    // One-shot fetch on mount silently stuck this tab on empty/stale data whenever the daemon
+    // was mid-restart at page-load time (e.g. multiple restarts in a session) — nothing ever
+    // retried. Poll every 15s (matches the rest of the dashboard) so a transient failure heals
+    // on its own instead of requiring a manual page reload.
+    const load = () => {
+      daemonClient.getTrades()
+        .then((merged) => { if (Array.isArray(merged)) setTrades(merged as PaperTradeRecord[]); })
+        .catch(() => {});
+      daemonClient.getRiskSettings()
+        .then((s) => setDisabledStrategies(s.disabledStrategies ?? []))
+        .catch(() => {});
+    };
+    load();
+    const id = window.setInterval(load, 15_000);
+    return () => window.clearInterval(id);
   }, []);
 
   // Win = structural target/T1, OR a green day-close (EOD flat that finished net-positive after costs).
