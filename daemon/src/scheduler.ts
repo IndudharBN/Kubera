@@ -106,6 +106,10 @@ let accountEquity = 0;    // real broker equity — drives the drawdown kill
 let lastOrderAt = 0;            // order-rate throttle
 let lastStandDownLogAt = 0;     // throttle the "market not live" stand-down log
 let executorRunning = false;    // re-entrancy guard (executor awaits a live LTP check)
+// Log the 3x-per-day cap skip once per (symbol,strategy,date) instead of every ~5s tick — the check
+// itself must stay silent-and-cheap since it runs every tick, but a single log line the first time a
+// row gets capped makes "why isn't this firing" diagnosable without reading daemon-state.json by hand.
+const dailyCapLoggedFor = new Set<string>();
 
 async function syncAccount(): Promise<void> {
   try {
@@ -339,7 +343,14 @@ async function tryFireTradesInner(): Promise<void> {
       continue;
     }
     // ≤3 entries per (strategy, symbol) per day — matches the backtest's re-entry cap.
-    if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) continue;
+    if (state.firedToday.filter((k) => k === `${row.symbol}|${stratId}`).length >= 3) {
+      const capKey = `${toETDate()}|${row.symbol}|${stratId}`;
+      if (!dailyCapLoggedFor.has(capKey)) {
+        dailyCapLoggedFor.add(capKey);
+        console.log(`[executor] ${row.symbol} ${stratId} — daily 3x attempt cap reached, no more entries today`);
+      }
+      continue;
+    }
     // Never two of the SAME strategy on the SAME symbol concurrently (no doubling one setup).
     if (openNow.some((t: { strategyId: string | null; symbol: string }) => t.strategyId === stratId && t.symbol === row.symbol)) continue;
     // Max concurrent total — throttled to 6 when the NIFTY tide is dead on BOTH timeframes.
@@ -435,6 +446,15 @@ async function tryFireTradesInner(): Promise<void> {
     emit('trade_opened', newTrade);
     console.log(`[executor] FIRE ${row.symbol} ${sig.strategyId} ${row.direction} entry=${newTrade.entry} stop=${newTrade.stop} target=${newTrade.target} qty=${newTrade.quantity} notional=₹${newTrade.notional.toFixed(0)}`);
 
+    // Mark fired against the daily 3x cap. NEUTRAL trades never reach the broker call below, so
+    // count them immediately; BULL/BEAR trades are counted inside the broker callback instead —
+    // see the comment there for why a config-level rejection (e.g. IP whitelist) must NOT consume
+    // an attempt.
+    if (newTrade.direction === 'NEUTRAL') {
+      setState((s) => ({ ...s, firedToday: [...s.firedToday, `${row.symbol}|${sig.strategyId}`] }));
+      saveState();
+    }
+
     // Submit bracket order to Alpaca paper account — async, does not block executor
     if (newTrade.direction !== 'NEUTRAL') {
       placePaperBracketOrder({
@@ -445,6 +465,10 @@ async function tryFireTradesInner(): Promise<void> {
         target: newTrade.target2 || newTrade.target,
         notional: newTrade.notional,
       }).then(async (order) => {
+        // Order reached the broker and was accepted — this is a genuine attempt on this setup,
+        // whatever happens to it next (even the unhedged-SL-M escalation below). Count it.
+        setState((s) => ({ ...s, firedToday: [...s.firedToday, `${row.symbol}|${sig.strategyId}`] }));
+        saveState();
         const ts = loadTrades();
         const idx = ts.findIndex((t: { id: string }) => t.id === newTrade.id);
         if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId, tpOrderId: order.tpId }; saveTrades(ts); }
@@ -475,12 +499,19 @@ async function tryFireTradesInner(): Promise<void> {
         const ts = loadTrades().filter((t) => t.id !== newTrade.id);
         saveTrades(ts);
         emit('trade_closed', newTrade); // tell UIs to drop it from the open list
+
+        // Config-level rejection (dynamic home IP fell off the Kite whitelist) — the setup itself
+        // was never actually tested against the market, and Kite only allows one whitelist change
+        // per week, so burning the 3x cap on these can silently cost an entire trading day. Every
+        // other rejection reason (margin, circuit, ASM, connectivity) IS a real attempt — count it.
+        if (!/is not allowed to place orders for this app/i.test(err.message)) {
+          setState((s) => ({ ...s, firedToday: [...s.firedToday, `${row.symbol}|${sig.strategyId}`] }));
+          saveState();
+        } else {
+          console.warn(`[executor] ${newTrade.symbol} ${sig.strategyId} — IP whitelist rejection, NOT counted against daily cap`);
+        }
       });
     }
-
-    // Mark fired so we don't double-fire this session
-    setState((s) => ({ ...s, firedToday: [...s.firedToday, `${row.symbol}|${sig.strategyId}`] }));
-    saveState();
   }
 
   if (tradesFired) saveTrades(trades);
