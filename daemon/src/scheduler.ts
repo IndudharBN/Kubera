@@ -290,6 +290,15 @@ async function tryFireTradesInner(): Promise<void> {
     if (!sig) continue;
     // Respect the strategy's own auto-ready flag — manual-review setups never auto-fire.
     if (!sig.canAutoReady) { console.log(`[executor] ${row.symbol} manual-review only — no auto-fire`); continue; }
+    // Confidence floor: trade_ready alone only guarantees live data + rr>=MIN_RR — it says nothing
+    // about checklist quality. A setup limping in on a mostly-green (not fully-green) checklist
+    // scored identically to a clean one for firing purposes. 75 requires effectively everything but
+    // data-freshness (already baked into trade_ready) and R:R/RVOL bonuses to be in order.
+    const MIN_AUTOFIRE_CONFIDENCE = 75;
+    if (sig.confidence < MIN_AUTOFIRE_CONFIDENCE) {
+      console.log(`[executor] ${row.symbol} ${sig.strategyId} confidence ${sig.confidence} < ${MIN_AUTOFIRE_CONFIDENCE} — not clean enough, skip`);
+      continue;
+    }
     // Conviction floor: UNCLASSIFIED (no confluence group, 3%-cap bucket) never auto-fires — over
     // 3 live days these were the churn tickets whose gross barely covered charges.
     if ((sig.signalGroup ?? 'UNCLASSIFIED') === 'UNCLASSIFIED') continue;
