@@ -1186,7 +1186,12 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
 // Wider stop buffer and higher minimum R:R vs 5m strategies.
 // 15m bars carry more ATR per bar so 0.5× is too tight; 1.0× gives real room.
 // R:R minimum 2.0 compensates for the wider stop with a higher reward requirement.
-const STOP_BUFFER_15M = 1.0;
+// 0.6× (was 1.0×): IFCI 2026-08-27 planned ₹1,574.80 risk (never reached — drifted to EOD at
+// -₹1,100.50 instead), user wants a tighter, more "normal" stop. Still a real ATR-scaled buffer
+// beyond the structural level (OB zone / swing / EMA20), not eliminated — just closer to the 5m
+// buffer. Tradeoff: more frequent stop-outs on ordinary 15m noise in exchange for smaller max loss
+// per trade.
+const STOP_BUFFER_15M = 0.6;
 const MIN_RR_15M = 2.0;
 // ADR floor for the 15m family (S10/S11/S12) only. Scoped here so tuning it
 // never affects the 5m strategies (S1-S9) or the universe-level ADR gate.
