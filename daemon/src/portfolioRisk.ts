@@ -67,3 +67,31 @@ export function checkPortfolioBeta(
   }
   return { ok: true };
 }
+
+interface OpenTradeForRisk extends OpenTrade { entry: number; stop: number; quantity: number; t1HitAt?: string; }
+
+// Sum of planned risk (entry-to-stop distance × size) across all open positions, plus the candidate
+// trade — capped as a % of account. maxPositions/riskPerTrade/dailyLossLimit all exist already, but
+// none of them cap simultaneous OPEN risk: a fast cluster of stop-outs can realize well past the
+// daily-loss limit before that (realized-P&L-only) check ever sees it. A position that already
+// scaled out at T1 (t1HitAt set) only has its remaining 50% at risk, and that half is usually
+// trailing at/above breakeven — count it at half weight rather than its original full risk.
+export function checkPortfolioOpenRisk(
+  openTrades: OpenTradeForRisk[],
+  newEntry: number,
+  newStop: number,
+  newQuantity: number,
+  accountBalance: number,
+  openRiskCapPct = 0.07,
+): { ok: boolean; reason?: string } {
+  if (accountBalance <= 0) return { ok: true };
+  const existing = openTrades
+    .filter((t) => t.status === 'Open')
+    .reduce((sum, t) => sum + Math.abs(t.entry - t.stop) * t.quantity * (t.t1HitAt ? 0.5 : 1), 0);
+  const newRisk = Math.abs(newEntry - newStop) * newQuantity;
+  const totalRiskPct = (existing + newRisk) / accountBalance;
+  if (totalRiskPct > openRiskCapPct) {
+    return { ok: false, reason: `Portfolio open risk ${(totalRiskPct * 100).toFixed(1)}% would exceed ${(openRiskCapPct * 100).toFixed(0)}% cap (₹${(existing + newRisk).toFixed(0)} at risk)` };
+  }
+  return { ok: true };
+}

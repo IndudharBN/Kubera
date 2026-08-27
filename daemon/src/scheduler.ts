@@ -11,7 +11,7 @@ import { kiteEnv } from './kite/kiteEnv';
 import { getLtp as getKiteLtp } from './kite/kiteClient';
 import { ensureKiteLogin } from './kite/kiteLogin';
 import { isNseHoliday, istDate } from './nse';
-import { checkSectorConcentration, checkPortfolioBeta } from './portfolioRisk';
+import { checkSectorConcentration, checkPortfolioBeta, checkPortfolioOpenRisk } from './portfolioRisk';
 import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, cancelPaperOrder, getOrderMap } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
@@ -424,6 +424,22 @@ async function tryFireTradesInner(): Promise<void> {
     );
     if (!betaCheck.ok) {
       console.log(`[executor] ${row.symbol} beta cap: ${betaCheck.reason}`);
+      continue;
+    }
+
+    // Portfolio open-risk cap: maxPositions/riskPerTrade/dailyLossLimit each bound one dimension,
+    // but nothing bounds simultaneous OPEN risk across all positions at once — a fast cluster of
+    // stop-outs (e.g. MEESHO 2026-08-20, -₹1,426.60 on a single 1R stop) can realize a large chunk
+    // of capital before the daily-loss check (realized P&L only) ever sees it coming.
+    const openRiskCheck = checkPortfolioOpenRisk(
+      trades.filter((t: { status: string }) => t.status === 'Open'),
+      newTrade.entry,
+      newTrade.stop,
+      newTrade.quantity,
+      accountBalance,
+    );
+    if (!openRiskCheck.ok) {
+      console.log(`[executor] ${row.symbol} open-risk cap: ${openRiskCheck.reason}`);
       continue;
     }
 
