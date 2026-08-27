@@ -9,11 +9,10 @@ import { istDateOf } from './tzfast';
 
 const MIN_RR = 1.5;
 const PREFERRED_RR = 2.5;
-const T1_RR = 0.7;           // scale out 50% at T1, SL → entry (BE). 0.7R (was 1.0, originally 1.5):
-                             // 127 live trades post-1.0R-change still show 0 T1 hits — but EOD closes
-                             // (drifted to the 15:15 close, never tagged a rung) peaked at +0.73R
-                             // realized. The move is there; the rung was still above it. Live evidence,
-                             // not a guess — revisit again once trades actually start tagging T1.
+// T1/T2 ladder removed 2026-08-27 (single target now, see planFromLevelsT1T2) — T1_RR only
+// still feeds structuralT1()'s search band, which sets the near-edge floor structuralT2() clamps
+// its single target above. No longer represents an actual partial-scale exit rung.
+const T1_RR = 0.7;
 const STOP_BUFFER_ATR = 0.5; // breathing room beyond anchor extreme
 const MIN_STOP_ATR = 0.5;    // stop must be ≥ 50% of daily ATR from entry
 const MIN_STOP_PCT = 0.005;  // stop must be ≥ 0.5% of price — catches atr20=0 (no daily data)
@@ -70,18 +69,25 @@ function planFromLevelsT1T2(
   }
   const rrT2 = rr(entry, stop, t2, input.direction);
   if (!Number.isFinite(rrT2) || rrT2 < MIN_RR) return null;
+  // Single-target plan (T1/T2 ladder removed 2026-08-27, user's explicit call after being shown
+  // the ladder was itself built to fix an earlier single-target system that never reached its
+  // target in 85 live trades — best winner peaked at 0.92R). target1 === target2 so
+  // monitorTrades.ts's hitTarget2 branch fires first and closes the full position on first touch;
+  // the T1-scale/breakeven-ratchet branches below it become dead code paths, left in place rather
+  // than ripped out in case this needs reverting. t2 is still the reachability-clamped adaptive
+  // target (remaining daily ATR range), not the old fixed 2.5R that failed before.
   return {
     entry: round(entry, 2),
     stop: round(stop, 2),
     target: round(t2, 2),
-    target1: round(t1, 2),
+    target1: round(t2, 2),
     target2: round(t2, 2),
     rr: round(rrT2, 2),
-    rr1: T1_RR,
+    rr1: round(rrT2, 2),
     riskPerShare: round(Math.abs(entry - stop), 2),
     triggerCandleTime: trigger?.time || new Date().toISOString(),
     invalidation: input.direction === 'BULL' ? 'Price closes below stop or loses VWAP with volume.' : 'Price closes above stop or reclaims VWAP with volume.',
-    riskSize: 'Scale 50% at T1, move stop to breakeven, hold 50% to T2.',
+    riskSize: 'Full size to target, single exit.',
   };
 }
 
