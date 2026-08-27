@@ -85,7 +85,11 @@ export const DEFAULT_RISK_SETTINGS: RiskSettings = {
   //   consistent across ~3 weeks (not a one-day blip). Small sample, but the pattern held through the
   //   Jul-22/23 trades too. Disabled 2026-07-23, evidence-based.
   disabledStrategies: ['vwap_pullback', 's7_volume_surge', 'rs_continuation', 'range_reversion', 'mss_breakout', 'ob_fvg_retest', 'ema20_bounce', 'liquidity_sweep', 'sniper_1m'],
-  sizeMultiplier: 2.0,       // 2× sizing — backtest: ~0.9%/day @ ~1.8% maxDD (live ~0.5-0.7% after caps/slippage)
+  // 1.0× (was 2.0 from 2026-08-20). Normalized per-₹1000-deployed P&L went from -₹0.79 (before,
+  // n=135) to -₹4.31 (after, n=15) — small after-sample and one outlier trade (MEESHO -₹1,426.60)
+  // dominate it, but PF also dropped 0.83→0.57 in the same window: losses landing bigger relative to
+  // wins, not just bigger in ₹. Reverted 2026-08-27, pending a larger sample before raising again.
+  sizeMultiplier: 1.0,
   deployCapPct: 0.80,        // ≤80% of capital deployed
   dailyProfitHalfPct: 0.02,  // +2% → half size
   dailyProfitStopPct: 0.03,  // +3% → done for the day
