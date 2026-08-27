@@ -108,6 +108,7 @@ export interface ProTradeSnapshot {
   regime: MarketRegime;
   marketLive?: boolean;
   marketStatus?: string;
+  firedToday?: string[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

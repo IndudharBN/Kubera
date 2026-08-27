@@ -53,6 +53,7 @@ export async function runFullScan(): Promise<void> {
     universeFallback: isUniverseFallback(),
     marketLive: snapshot.marketLive,
     marketStatus: snapshot.marketStatus,
+    firedToday: getState().firedToday,
   });
 }
 

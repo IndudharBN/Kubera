@@ -598,6 +598,7 @@ function WorkflowTable({
   orderedTrades = [],
   watchlistSet = new Set<string>(),
   accountBalance = 0,
+  firedToday = [],
 }: {
   rows: ProTradeRow[];
   selected: ProTradeRow | null;
@@ -606,7 +607,12 @@ function WorkflowTable({
   orderedTrades?: PaperTrade[];
   watchlistSet?: Set<string>;
   accountBalance?: number;
+  firedToday?: string[];
 }) {
+  // ≤3 entries per (symbol,strategy) per day — mirrors scheduler.ts's silent cap so the dashboard
+  // can show "capped" instead of looking identical to "nothing qualifies".
+  const firedCounts = new Map<string, number>();
+  for (const k of firedToday) firedCounts.set(k, (firedCounts.get(k) ?? 0) + 1);
   const PAGE = 25;
   const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -702,7 +708,14 @@ function WorkflowTable({
                       </button>
                     </td>
                     <td className="py-3 px-3 border-r border-white/5">{groupBadge(row.primaryStrategy?.signalGroup, row.primaryStrategy?.groupSizeMult)}</td>
-                    <td className="py-3 px-3 border-r border-white/5">{stageBadge(row.workflowStage)}</td>
+                    <td className="py-3 px-3 border-r border-white/5">
+                      {stageBadge(row.workflowStage)}
+                      {row.primaryStrategy && (firedCounts.get(`${row.symbol}|${row.primaryStrategy.strategyId}`) ?? 0) >= 3 && (
+                        <span title="3x daily attempt cap reached for this symbol+strategy — no more entries today" className="ml-1.5 inline-block text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">
+                          Capped
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-3 border-r border-white/5 text-slate-300">
                       {row.primaryStrategy ? (
                         <div className="flex flex-col gap-1">
@@ -1078,6 +1091,11 @@ function PaperTradeMonitor({
                   <td className="py-3 px-3 border-r border-white/5">
                     <div className="font-black text-white">{trade.symbol}</div>
                     <div className="text-[10px] text-slate-500 uppercase truncate max-w-[160px]">{trade.company}</div>
+                    {typeof trade.beta === 'number' && (
+                      <div title="Beta vs NIFTY — how much this stock tends to move with the index" className={`text-[9px] font-mono mt-0.5 ${trade.beta < 0.6 ? 'text-amber-400' : trade.beta > 1.5 ? 'text-fuchsia-400' : 'text-slate-500'}`}>
+                        β {trade.beta.toFixed(2)}
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-3 border-r border-white/5 text-slate-300">{trade.strategyCode} {trade.strategyName}</td>
                   <td className="py-3 px-3 border-r border-white/5">{groupBadge(trade.signalGroup, undefined)}</td>
@@ -1503,7 +1521,7 @@ export function ProTradeScannerScreen() {
   const applyDaemonState = React.useCallback((state: Record<string, unknown>) => {
     if (state['rows']) {
       const rows = state['rows'] as ProTradeRow[];
-      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', nifty50Trend5m: (state['nifty50Trend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', nifty50Trend15m: (state['nifty50Trend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined } as ProTradeSnapshot);
+      setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', nifty50Trend5m: (state['nifty50Trend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', nifty50Trend15m: (state['nifty50Trend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined, firedToday: state['firedToday'] as string[] | undefined } as ProTradeSnapshot);
     }
     if (state['universeFallback'] !== undefined) setUniverseFallback(state['universeFallback'] as boolean);
     if (state['trades']) setPaperTrades(state['trades'] as PaperTrade[]);
@@ -1568,10 +1586,10 @@ export function ProTradeScannerScreen() {
       }),
       daemonWs.on('disconnected', () => setDaemonOnline(false)),
       daemonWs.on('snapshot_update', (payload) => {
-        const p = payload as { rows: ProTradeRow[]; nifty50Trend5m: 'UP'|'DOWN'|'FLAT'; nifty50Trend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean; marketLive?: boolean; marketStatus?: string };
+        const p = payload as { rows: ProTradeRow[]; nifty50Trend5m: 'UP'|'DOWN'|'FLAT'; nifty50Trend15m: 'UP'|'DOWN'|'FLAT'; regime: ProTradeSnapshot['regime']; fetchedAt: string; universeBuiltAt?: string | null; qualifiedCount?: number; universeSize?: number; universeFallback?: boolean; marketLive?: boolean; marketStatus?: string; firedToday?: string[] };
         const qCount = p.qualifiedCount ?? p.rows.filter(r => r.qualified).length;
         if (p.universeFallback !== undefined) setUniverseFallback(p.universeFallback);
-        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', nifty50Trend5m: p.nifty50Trend5m, nifty50Trend15m: p.nifty50Trend15m, regime: p.regime, marketLive: p.marketLive, marketStatus: p.marketStatus });
+        setSnapshot((prev) => prev ? { ...prev, ...p, universeBuiltAt: p.universeBuiltAt ?? prev.universeBuiltAt, qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length } : { rows: p.rows, rawRows: p.rows, filteredRows: [], qualifiedCount: qCount, scannedCount: p.universeSize ?? p.rows.length, rawCount: p.rows.length, filteredOut: 0, fetchedAt: p.fetchedAt, universeBuiltAt: p.universeBuiltAt ?? null, providerStatus: 'daemon', nifty50Trend5m: p.nifty50Trend5m, nifty50Trend15m: p.nifty50Trend15m, regime: p.regime, marketLive: p.marketLive, marketStatus: p.marketStatus, firedToday: p.firedToday });
         setLoading(false);
         setError('');
       }),
@@ -2210,6 +2228,7 @@ export function ProTradeScannerScreen() {
             orderedTrades={activeStage === 'ordered' && activeStrategy === 'all' ? orderedPaperTrades : []}
             watchlistSet={watchlistSet}
             accountBalance={accountBalance}
+            firedToday={snapshot?.firedToday}
             onSelect={(row) => { setSelectedRow(row); setApprovalMessage(''); }}
           />
         </>

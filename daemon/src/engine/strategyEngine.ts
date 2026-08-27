@@ -17,6 +17,9 @@ const T1_RR = 0.7;           // scale out 50% at T1, SL → entry (BE). 0.7R (wa
 const STOP_BUFFER_ATR = 0.5; // breathing room beyond anchor extreme
 const MIN_STOP_ATR = 0.5;    // stop must be ≥ 50% of daily ATR from entry
 const MIN_STOP_PCT = 0.005;  // stop must be ≥ 0.5% of price — catches atr20=0 (no daily data)
+// S9 flag_break compression gate, as a multiple of ATR20. 0.5 has never fired live (~130 trades,
+// 3+ weeks) — too tight for NSE intraday chop. Overridable for backtest sweeps via BT_FLAG_ATR_MULT.
+const FLAG_COMPRESSION_ATR_MULT = process.env['BT_FLAG_ATR_MULT'] ? Number(process.env['BT_FLAG_ATR_MULT']) : 0.5;
 
 function noiseFloor(vixLevel?: number | null) {
   if (!vixLevel) return 0.75;
@@ -258,7 +261,11 @@ function confidence(checklist: StrategyChecklistItem[], tradePlan: TradePlan | n
   const rrScore = tradePlan ? Math.min(15, Math.max(0, (tradePlan.rr - 1) * 8)) : 0;
   const dataScore = input.dataStatus.mode === 'live' && !input.dataStatus.stale ? 10 : 0;
   const manualPenalty = manualOnly ? 10 : 0;
-  return Math.max(0, Math.min(100, Math.round(checkScore + rrScore + dataScore + Math.min(5, input.rvol) - manualPenalty)));
+  // htfTrendContext() never hard-fails counter-trend entries (single-stock setups legitimately run
+  // against the HTF trend) — but it shouldn't score identically to an aligned one either. Small
+  // penalty, not a block: a genuinely strong counter-trend setup can still clear the auto-fire floor.
+  const trendPenalty = tradePlan && !input.trend15mAligned ? 6 : 0;
+  return Math.max(0, Math.min(100, Math.round(checkScore + rrScore + dataScore + Math.min(5, input.rvol) - manualPenalty - trendPenalty)));
 }
 
 function missing(checklist: StrategyChecklistItem[], tradePlan: TradePlan | null, input: StrategyInput, manualOnly = false) {
@@ -1132,7 +1139,7 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
       }
     : input;
 
-  const flagFormed = flagRange < input.atr20 * 0.5; // 0.5×ATR — true compression; 1×ATR was just sideways
+  const flagFormed = flagRange < input.atr20 * FLAG_COMPRESSION_ATR_MULT;
   const breakout = selfDir !== null; // flag break IS the direction signal
   const rvolOk = input.rvol >= 1.0;
   const flagMaxVol = Math.max(...flagBars.map((c) => c.volume));
@@ -1154,8 +1161,8 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
   const checklist = [
     selfDir ? pass('Directional bias', `${selfDir} — self-determined from flag break side`) : fail('Directional bias', `Waiting for close above ${round(flagHigh, 2)} or below ${round(flagLow, 2)}`),
     flagFormed
-      ? pass('Flag formed', `Range ${round(flagRange, 2)} < 0.5×ATR (${round(input.atr20 * 0.5, 2)}) ✓`)
-      : fail('Flag formed', `Range ${round(flagRange, 2)} too wide — needs < ${round(input.atr20 * 0.5, 2)} (0.5×ATR)`),
+      ? pass('Flag formed', `Range ${round(flagRange, 2)} < ${FLAG_COMPRESSION_ATR_MULT}×ATR (${round(input.atr20 * FLAG_COMPRESSION_ATR_MULT, 2)}) ✓`)
+      : fail('Flag formed', `Range ${round(flagRange, 2)} too wide — needs < ${round(input.atr20 * FLAG_COMPRESSION_ATR_MULT, 2)} (${FLAG_COMPRESSION_ATR_MULT}×ATR)`),
     breakout
       ? pass('Flag break', `Close ${selfDir === 'BULL' ? 'above flag high' : 'below flag low'} (${round(selfDir === 'BULL' ? flagHigh : flagLow, 2)}) ✓`)
       : fail('Flag break', 'No break yet — price inside flag'),
