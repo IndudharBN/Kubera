@@ -7,7 +7,10 @@ import type { SignalGroup, StrategyChecklistItem, StrategyId, StrategyInput, Str
 import { STRATEGY_LABELS, workflowStageRank } from './workflowTypes';
 import { istDateOf } from './tzfast';
 
-const MIN_RR = 1.5;
+// 0.5 (was 1.5): meaningless as a reward>risk requirement once the target is T1 (~0.7R-1.0R by
+// construction — always < 1.0 reward/risk). Now just rejects degenerate/near-zero T1 distances;
+// real T1 values from structuralT1's band search clear this easily.
+const MIN_RR = 0.5;
 const PREFERRED_RR = 2.5;
 // T1/T2 ladder removed 2026-08-27 (single target now, see planFromLevelsT1T2) — T1_RR only
 // still feeds structuralT1()'s search band, which sets the near-edge floor structuralT2() clamps
@@ -56,34 +59,25 @@ function planFromLevelsT1T2(
 ): TradePlan | null {
   const risk = input.direction === 'BULL' ? entry - stop : stop - entry;
   if (!Number.isFinite(risk) || risk <= 0) return null;
-  // Adaptive T2: cap the runner target by the stock's REMAINING daily range (ATR20 minus range
-  // already used today). A fixed 2.5R on a name that has spent its ATR is fiction — 0 of 85 live
-  // trades ever reached T2. Honest targets also make the net-R:R gate meaningful: exhausted names
-  // fail the gate and don't trade. Floor at 1.2R so the ladder stays above T1 (1.0R).
-  const todayIst = istDateOf(new Date().toISOString());
-  const dayBars = (input.candles.five ?? []).filter((c) => istDateOf(c.time) === todayIst);
-  if (dayBars.length && input.atr20 > 0) {
-    const used = Math.max(...dayBars.map((c) => c.high)) - Math.min(...dayBars.map((c) => c.low));
-    const maxDist = Math.max(input.atr20 - used, risk * 1.2);
-    t2 = input.direction === 'BULL' ? Math.min(t2, entry + maxDist) : Math.max(t2, entry - maxDist);
-  }
-  const rrT2 = rr(entry, stop, t2, input.direction);
-  if (!Number.isFinite(rrT2) || rrT2 < MIN_RR) return null;
-  // Single-target plan (T1/T2 ladder removed 2026-08-27, user's explicit call after being shown
-  // the ladder was itself built to fix an earlier single-target system that never reached its
-  // target in 85 live trades — best winner peaked at 0.92R). target1 === target2 so
-  // monitorTrades.ts's hitTarget2 branch fires first and closes the full position on first touch;
-  // the T1-scale/breakeven-ratchet branches below it become dead code paths, left in place rather
-  // than ripped out in case this needs reverting. t2 is still the reachability-clamped adaptive
-  // target (remaining daily ATR range), not the old fixed 2.5R that failed before.
+  void t2; // T2/adaptive-runner logic removed 2026-08-27 (see below) — kept as a param so every
+           // call site (11 strategies) doesn't need editing; the geometry it fed is unused now.
+  // Single-target plan, T1 only (T2/ladder removed 2026-08-27, user's explicit call — twice: first
+  // asked to remove T2, then clarified they specifically want to keep T1 as-is, not fold T2 into
+  // it). T1 is the reachable ~0.7R band target (structuralT1's swing-pivot search, or the flat
+  // T1_RR fallback) — NOT the old adaptive/fixed T2 the ladder used to run to. History for whoever
+  // revisits this: the ladder itself was built (cb8cbfd, Jul-8) to fix an earlier single-target
+  // system where 85 live trades never reached a single far 2.5R target (best winner 0.92R) — this
+  // reintroduces that same shape of risk, mitigated by T1 sitting much closer than that old target.
+  const rrT1 = rr(entry, stop, t1, input.direction);
+  if (!Number.isFinite(rrT1) || rrT1 < MIN_RR) return null;
   return {
     entry: round(entry, 2),
     stop: round(stop, 2),
-    target: round(t2, 2),
-    target1: round(t2, 2),
-    target2: round(t2, 2),
-    rr: round(rrT2, 2),
-    rr1: round(rrT2, 2),
+    target: round(t1, 2),
+    target1: round(t1, 2),
+    target2: round(t1, 2),
+    rr: round(rrT1, 2),
+    rr1: round(rrT1, 2),
     riskPerShare: round(Math.abs(entry - stop), 2),
     triggerCandleTime: trigger?.time || new Date().toISOString(),
     invalidation: input.direction === 'BULL' ? 'Price closes below stop or loses VWAP with volume.' : 'Price closes above stop or reclaims VWAP with volume.',
@@ -1198,7 +1192,9 @@ export function evaluateFlagBreak(input: StrategyInput): StrategySignal {
 // buffer. Tradeoff: more frequent stop-outs on ordinary 15m noise in exchange for smaller max loss
 // per trade.
 const STOP_BUFFER_15M = 0.6;
-const MIN_RR_15M = 2.0;
+// 0.5 (was 2.0): that 2.0 was gated against T2 (the far/adaptive runner target, now removed).
+// Against T1 (~0.7R-1.0R by construction) 2.0 would reject every setup. Matches MIN_RR's reasoning.
+const MIN_RR_15M = 0.5;
 // ADR floor for the 15m family (S10/S11/S12) only. Scoped here so tuning it
 // never affects the 5m strategies (S1-S9) or the universe-level ADR gate.
 const ADR_MIN_15M = 2.5;
@@ -1251,7 +1247,7 @@ export function evaluateOrb15mRetest(input: StrategyInput): StrategySignal {
   const risk = Math.abs(entry - stop);
   const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
-  const computedRR = ob && atOb ? rr(entry, stop, t2, dir) : 0;
+  const computedRR = ob && atOb ? rr(entry, stop, t1, dir) : 0;
   const rrOk = computedRR >= MIN_RR_15M;
   const trigger = last(fifteen);
 
@@ -1339,7 +1335,7 @@ export function evaluateVwap15mPullback(input: StrategyInput): StrategySignal {
   const risk = Math.abs(entry - stop);
   const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
-  const rrOk = rr(entry, stop, t2, dir) >= MIN_RR_15M;
+  const rrOk = rr(entry, stop, t1, dir) >= MIN_RR_15M;
   const tradePlan = selfDir && touchedVwap && reclaimed && rsOk && rvolOk && adrOk && rrOk
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
     : null;
@@ -1408,7 +1404,7 @@ export function evaluateEma20Bounce15m(input: StrategyInput): StrategySignal {
   const risk = Math.abs(entry - stop);
   const t1 = structuralT1(input.candles.five, dir, entry, risk);
   const t2 = structuralT2(selfInput, entry, risk, t1);
-  const rrOk = rr(entry, stop, t2, dir) >= MIN_RR_15M;
+  const rrOk = rr(entry, stop, t1, dir) >= MIN_RR_15M;
   const tradePlan = emaRising && touchedEma && reclaimed && rvolOk && adrOk && rrOk && timeGateOk
     ? planFromLevelsT1T2(selfInput, entry, stop, t1, t2, trigger)
     : null;
