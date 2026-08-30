@@ -111,6 +111,8 @@ let executorRunning = false;    // re-entrancy guard (executor awaits a live LTP
 // row gets capped makes "why isn't this firing" diagnosable without reading daemon-state.json by hand.
 const dailyCapLoggedFor = new Set<string>();
 
+let lastSyncReauthAt = 0; // throttle: don't hammer Kite's login flow every 30s on a real auth failure
+
 async function syncAccount(): Promise<void> {
   try {
     const account = await getPaperAccount();
@@ -126,7 +128,21 @@ async function syncAccount(): Promise<void> {
       }
     }
   } catch (err) {
-    console.warn('[scheduler] account sync failed:', (err as Error).message);
+    const msg = (err as Error).message;
+    console.warn('[scheduler] account sync failed:', msg);
+    // 2026-08-30: daily token expiry left this failing every 30s for ~2.4h before the daemon died —
+    // the periodic 20-min ensureKiteLogin() timer was fully decoupled from this loop, so a token
+    // refresh (even if it succeeded) never got a chance to fix what syncAccount was seeing. On a
+    // genuine Kite auth rejection (not a network blip — checkToken()'s same classification), force
+    // an immediate re-login attempt instead of waiting up to 20 minutes. Throttled to once/2min so a
+    // real bad-credentials failure doesn't spam Kite's login endpoint every single 30s tick.
+    const isAuthError = /Incorrect `api_key` or `access_token`|TokenException|Invalid session/i.test(msg)
+      && !/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|getaddrinfo|fetch failed|network|timeout|No response from server/i.test(msg);
+    if (isAuthError && Date.now() - lastSyncReauthAt > 2 * 60 * 1000) {
+      lastSyncReauthAt = Date.now();
+      console.warn('[scheduler] auth error on account sync — forcing immediate re-login');
+      ensureKiteLogin().catch((e) => console.warn('[kite] forced re-login failed:', (e as Error).message));
+    }
   }
 }
 
