@@ -33,7 +33,11 @@ export function canPaperTradeRow(
   accountBalance = 100_000,
 ): boolean {
   const plan = effectiveTradePlan(row);
-  return Boolean(plan && plan.rr >= 1.5 && availablePaperNotional(trades, accountBalance) > 0);
+  // 0.5 (was 1.5): stale from before the T1/T2 ladder was removed 2026-08-27. T1-only targets are
+  // ~0.7R-1.0R by construction (reward always < risk for a CLOSE target) — this gate silently
+  // rejected every single trade_ready row for a full day before being caught. Matches strategyEngine's
+  // MIN_RR, which planFromLevelsT1T2 already gates on when building row.tradePlan in the first place.
+  return Boolean(plan && plan.rr >= 0.5 && availablePaperNotional(trades, accountBalance) > 0);
 }
 
 export function buildPaperTrade(
@@ -46,7 +50,8 @@ export function buildPaperTrade(
   cbSizeMult = 1.0,
 ): PaperTrade | null {
   const plan = effectiveTradePlan(row);
-  if (!plan || plan.rr < 1.5) return null;
+  // 0.5 (was 1.5) — same fix as canPaperTradeRow above, same reason.
+  if (!plan || plan.rr < 0.5) return null;
 
   const strategyId = row.primaryStrategy?.strategyId ?? null;
   const isReversal = strategyId === 'liquidity_sweep' || strategyId === 'ob_fvg_retest';

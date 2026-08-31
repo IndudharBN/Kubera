@@ -417,7 +417,9 @@ function playTradeReadyAlert() {
 
 function canPaperTradeRow(row: ProTradeRow, settings: ProTradeSettings = DEFAULT_PROTRADE_SETTINGS, trades: PaperTrade[] = [], accountBalance = 100_000) {
   const plan = effectiveTradePlan(row, settings);
-  return Boolean(plan && plan.rr >= 1.5 && availablePaperNotional(settings, trades, accountBalance) > 0);
+  // 0.5 (was 1.5) — matches the backend's MIN_RR since the T1/T2 ladder was removed (single T1-only
+  // target, ~0.7R-1.0R by construction). Stale 1.5 here disabled the manual Paper Trade button too.
+  return Boolean(plan && plan.rr >= 0.5 && availablePaperNotional(settings, trades, accountBalance) > 0);
 }
 
 
@@ -835,7 +837,7 @@ function DecisionPanel({
   if (!row) return null;
   const signal = row.primaryStrategy;
   const canApprove = row.workflowStage === 'trade_ready' && Boolean(row.tradePlan);
-  const canPaperTrade = Boolean(row.tradePlan && row.tradePlan.rr >= 1.5);
+  const canPaperTrade = Boolean(row.tradePlan && row.tradePlan.rr >= 0.5); // matches backend MIN_RR (T1-only target)
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-end">
       <section className="h-full w-full max-w-[720px] bg-[#080b12] border-l border-white/10 shadow-2xl overflow-y-auto">
@@ -1790,7 +1792,12 @@ export function ProTradeScannerScreen() {
     setRebuildLoading(true);
     try {
       await daemonClient.rebuildUniverse();
-    } catch { /* daemon offline */ }
+      setError('');
+    } catch (err) {
+      // Previously silently swallowed — a hung/unresponsive daemon made the button look broken
+      // with zero feedback. Surface it in the same banner used for daemon-offline errors.
+      setError(`Rebuild Universe failed: ${err instanceof Error ? err.message : String(err)} — daemon may be offline or unresponsive.`);
+    }
     finally { setRebuildLoading(false); }
   }
 
