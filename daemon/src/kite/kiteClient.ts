@@ -28,7 +28,7 @@ export function kc(): KC {
 
 /** Confirm the session is valid (also used by the verification smoke test). */
 export async function getProfileName(): Promise<string> {
-  const p = await kc().getProfile();
+  const p = await withTimeout(kc().getProfile(), 15_000, 'getProfile');
   return p.user_name;
 }
 
@@ -82,7 +82,11 @@ export async function loadInstruments(exchange = 'NSE'): Promise<void> {
   const cached = readCache();
   if (cached && cached.length) { indexInstruments(cached); return; }
 
-  const raw = (await kc().getInstruments(exchange as 'NSE')) as unknown as RawInstrument[];
+  const raw = (await withTimeout(
+    kc().getInstruments(exchange as 'NSE') as unknown as Promise<RawInstrument[]>,
+    20_000,
+    'getInstruments',
+  ));
   const list: InstrumentInfo[] = raw
     .filter((r) => r.instrument_type === 'EQ')
     .map((r) => ({
@@ -244,7 +248,15 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, KiteQ
   }
   if (fresh.length) {
     const keys = fresh.map((s) => `NSE:${s.toUpperCase()}`);
-    const resp = (await kc().getQuote(keys)) as unknown as Record<string, KiteQuote>;
+    // 2026-08-31: getQuote had no timeout (same class of bug as getHistoricalData below) — a
+    // stuck request here silently stalled the whole scan mid-flight (scan started, never
+    // completed, no error logged) which starved the executor/monitor/account-sync intervals too,
+    // while the HTTP server stayed superficially responsive to unrelated requests like /api/health.
+    const resp = (await withTimeout(
+      kc().getQuote(keys) as unknown as Promise<Record<string, KiteQuote>>,
+      15_000,
+      'getQuote',
+    ));
     for (const [key, val] of Object.entries(resp)) {
       const sym = key.replace(/^NSE:/, '');
       out[sym] = val;
@@ -259,7 +271,9 @@ export async function getQuotes(symbols: string[]): Promise<Record<string, KiteQ
 export async function getLtp(symbols: string[]): Promise<Record<string, number>> {
   if (!symbols.length) return {};
   const keys = symbols.map((s) => `NSE:${s.toUpperCase()}`);
-  const resp = await kc().getLTP(keys);
+  // Same unbounded-hang risk as getQuote above — the executor's entry-drift guard awaits this
+  // directly, so a stuck call here would silently freeze every new entry attempt.
+  const resp = await withTimeout(kc().getLTP(keys), 15_000, 'getLTP');
   const out: Record<string, number> = {};
   for (const [key, val] of Object.entries(resp)) {
     out[key.replace(/^NSE:/, '')] = val.last_price;
