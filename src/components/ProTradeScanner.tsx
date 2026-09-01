@@ -80,7 +80,7 @@ interface ProTradeSettings {}
 
 const DEFAULT_PROTRADE_SETTINGS: ProTradeSettings = {};
 
-interface PaperTrade {
+interface Trade {
   id: string;
   symbol: string;
   company: string;
@@ -122,17 +122,17 @@ const STAGE_TONES: Record<WorkflowStage, string> = {
   ordered: 'border-green-500/30 bg-green-500/5 text-green-300',
 };
 
-function loadPaperTrades() {
+function loadTrades() {
   if (typeof window === 'undefined') return [];
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(PAPER_TRADES_STORAGE_KEY) || '[]') as PaperTrade[];
+    const parsed = JSON.parse(window.localStorage.getItem(PAPER_TRADES_STORAGE_KEY) || '[]') as Trade[];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-function savePaperTrades(trades: PaperTrade[]) {
+function saveTrades(trades: Trade[]) {
   window.localStorage.setItem(PAPER_TRADES_STORAGE_KEY, JSON.stringify(trades));
 }
 
@@ -246,10 +246,10 @@ function rowToSignal(row: ProTradeRow): Signal {
   };
 }
 
-function withOrderedStage(rows: ProTradeRow[], paperTrades: PaperTrade[] = []) {
-  const paperSymbols = new Set(paperTrades.filter((trade) => trade.status === 'Open').map((trade) => baseSymbol(trade.symbol)));
+function withOrderedStage(rows: ProTradeRow[], trades: Trade[] = []) {
+  const openSymbols = new Set(trades.filter((trade) => trade.status === 'Open').map((trade) => baseSymbol(trade.symbol)));
   return rows.map((row) => (
-    paperSymbols.has(baseSymbol(row.symbol))
+    openSymbols.has(baseSymbol(row.symbol))
       ? { ...row, workflowStage: 'ordered' as WorkflowStage }
       : row
   ));
@@ -261,7 +261,7 @@ function countRows(rows: ProTradeRow[], stage: WorkflowStage, rawRows: ProTradeR
   return rows.filter((row) => row.workflowStage === stage).length;
 }
 
-function paperPnl(trade: PaperTrade, exitPrice: number) {
+function tradePnl(trade: Trade, exitPrice: number) {
   const gross = trade.direction === 'BEAR'
     ? (trade.entry - exitPrice) * trade.quantity
     : (exitPrice - trade.entry) * trade.quantity;
@@ -271,12 +271,12 @@ function paperPnl(trade: PaperTrade, exitPrice: number) {
   };
 }
 
-function closePaperTrade(trade: PaperTrade, exitPrice: number, outcome: PaperTrade['outcome'], closedAt = new Date().toISOString()): PaperTrade {
-  const result = paperPnl(trade, exitPrice);
+function closeTrade(trade: Trade, exitPrice: number, outcome: Trade['outcome'], closedAt = new Date().toISOString()): Trade {
+  const result = tradePnl(trade, exitPrice);
   // 'Stop' implies a losing exit. If the exit is profitable (e.g. VWAP re-cross structural
   // exit while price is still above entry), relabel as 'Manual' — a discretionary/structural
   // close rather than a hard stop hit. Prevents Stop + pnl>0 mismatch in analytics.
-  const correctedOutcome: PaperTrade['outcome'] = outcome === 'Stop' && result.pnl > 0 ? 'Manual' : outcome;
+  const correctedOutcome: Trade['outcome'] = outcome === 'Stop' && result.pnl > 0 ? 'Manual' : outcome;
   return {
     ...trade,
     status: 'Closed',
@@ -288,19 +288,19 @@ function closePaperTrade(trade: PaperTrade, exitPrice: number, outcome: PaperTra
   };
 }
 
-function paperTarget1(trade: PaperTrade) {
+function tradeTarget1(trade: Trade) {
   return Number(trade.target1 || trade.target || 0);
 }
 
-function paperTarget2(trade: PaperTrade) {
-  return Number(trade.target2 || trade.target || paperTarget1(trade));
+function tradeTarget2(trade: Trade) {
+  return Number(trade.target2 || trade.target || tradeTarget1(trade));
 }
 
-function paperTrailingStop(trade: PaperTrade) {
+function tradeTrailingStop(trade: Trade) {
   return Number(trade.trailingStop || trade.stop || 0);
 }
 
-function monitorPaperTrades(trades: PaperTrade[], rows: ProTradeRow[]) {
+function monitorTrades(trades: Trade[], rows: ProTradeRow[]) {
   const priceBySymbol = new Map(rows.map((row) => [baseSymbol(row.symbol), row.price]));
   const vwapBySymbol = new Map(rows.map((row) => [baseSymbol(row.symbol), row.vwap]));
   let changed = false;
@@ -311,15 +311,15 @@ function monitorPaperTrades(trades: PaperTrade[], rows: ProTradeRow[]) {
     if (now - new Date(trade.openedAt).getTime() < 60_000) return trade;
     const current = priceBySymbol.get(baseSymbol(trade.symbol));
     if (!current) return trade;
-    const target1 = paperTarget1(trade);
-    const target2 = paperTarget2(trade);
-    const trailingStop = paperTrailingStop(trade);
+    const target1 = tradeTarget1(trade);
+    const target2 = tradeTarget2(trade);
+    const trailingStop = tradeTrailingStop(trade);
     const hitTarget2 = trade.direction === 'BEAR' ? current <= target2 : current >= target2;
     const hitT1 = trade.direction === 'BEAR' ? current <= target1 : current >= target1;
     const hitStop = trade.direction === 'BEAR' ? current >= trailingStop : current <= trailingStop;
     if (hitTarget2) {
       changed = true;
-      return closePaperTrade(trade, target2, 'Target');
+      return closeTrade(trade, target2, 'Target');
     }
     // Phase 1: T1 hit → scale out 50%, SL moves to entry (breakeven)
     if (!trade.t1HitAt && hitT1) {
@@ -351,7 +351,7 @@ function monitorPaperTrades(trades: PaperTrade[], rows: ProTradeRow[]) {
       const exitPrice = trade.t1HitAt
         ? (trade.direction === 'BEAR' ? Math.min(trailingStop, current) : Math.max(trailingStop, current))
         : current;
-      return closePaperTrade(trade, exitPrice, trade.t1HitAt ? 'T1 Profit' : 'Stop');
+      return closeTrade(trade, exitPrice, trade.t1HitAt ? 'T1 Profit' : 'Stop');
     }
     // S2/S3 structural exit: thesis died when price crosses back through VWAP pre-T1.
     // S2 (VWAP reclaim): VWAP re-cross = reclaim failed. S3 (RS continuation): VWAP re-cross = RS edge gone.
@@ -360,7 +360,7 @@ function monitorPaperTrades(trades: PaperTrade[], rows: ProTradeRow[]) {
       const vwap = vwapBySymbol.get(baseSymbol(trade.symbol));
       if (vwap && (trade.direction === 'BULL' ? current < vwap : current > vwap)) {
         changed = true;
-        return closePaperTrade(trade, current, 'Stop');
+        return closeTrade(trade, current, 'Stop');
       }
     }
     return trade;
@@ -375,7 +375,7 @@ function effectiveTradePlan(row: ProTradeRow, _settings: ProTradeSettings) {
   return row.tradePlan;
 }
 
-function availablePaperNotional(_settings: ProTradeSettings, trades: PaperTrade[], accountBalance: number) {
+function availableNotional(_settings: ProTradeSettings, trades: Trade[], accountBalance: number) {
   const cap = accountBalance * 0.65;
   const openNotional = trades
     .filter((trade) => trade.status === 'Open')
@@ -415,11 +415,11 @@ function playTradeReadyAlert() {
   } catch { /* browser may block audio before interaction */ }
 }
 
-function canPaperTradeRow(row: ProTradeRow, settings: ProTradeSettings = DEFAULT_PROTRADE_SETTINGS, trades: PaperTrade[] = [], accountBalance = 100_000) {
+function canTradeRow(row: ProTradeRow, settings: ProTradeSettings = DEFAULT_PROTRADE_SETTINGS, trades: Trade[] = [], accountBalance = 100_000) {
   const plan = effectiveTradePlan(row, settings);
   // 0.5 (was 1.5) — matches the backend's MIN_RR since the T1/T2 ladder was removed (single T1-only
-  // target, ~0.7R-1.0R by construction). Stale 1.5 here disabled the manual Paper Trade button too.
-  return Boolean(plan && plan.rr >= 0.5 && availablePaperNotional(settings, trades, accountBalance) > 0);
+  // target, ~0.7R-1.0R by construction). Stale 1.5 here disabled the manual Trade button too.
+  return Boolean(plan && plan.rr >= 0.5 && availableNotional(settings, trades, accountBalance) > 0);
 }
 
 
@@ -606,7 +606,7 @@ function WorkflowTable({
   selected: ProTradeRow | null;
   onSelect: (row: ProTradeRow) => void;
   reasonMode?: 'strategy' | 'base';
-  orderedTrades?: PaperTrade[];
+  orderedTrades?: Trade[];
   watchlistSet?: Set<string>;
   accountBalance?: number;
   firedToday?: string[];
@@ -682,7 +682,7 @@ function WorkflowTable({
               const expanded = expandedSymbol === rowKey;
               const orderedTrade = orderedTradeBySymbol.get(baseSymbol(row.symbol));
               const currentPrice = row.price || orderedTrade?.exitPrice || orderedTrade?.entry || 0;
-              const livePnl = orderedTrade ? (orderedTrade.status === 'Open' ? paperPnl(orderedTrade, currentPrice) : { pnl: orderedTrade.pnl || 0, pnlPercent: orderedTrade.pnlPercent || 0 }) : null;
+              const livePnl = orderedTrade ? (orderedTrade.status === 'Open' ? tradePnl(orderedTrade, currentPrice) : { pnl: orderedTrade.pnl || 0, pnlPercent: orderedTrade.pnlPercent || 0 }) : null;
               return (
                 <React.Fragment key={rowKey}>
                   <tr className={`border-b border-white/5 hover:bg-white/5 ${selected?.symbol === row.symbol ? 'bg-indigo-500/10' : ''}`}>
@@ -823,7 +823,7 @@ function DecisionPanel({
   message,
   onClose,
   onApprove,
-  onPaperTrade,
+  onTrade,
   onChart,
 }: {
   row: ProTradeRow | null;
@@ -831,13 +831,13 @@ function DecisionPanel({
   message: string;
   onClose: () => void;
   onApprove: (row: ProTradeRow) => void;
-  onPaperTrade: (row: ProTradeRow) => void;
+  onTrade: (row: ProTradeRow) => void;
   onChart: (row: ProTradeRow) => void;
 }) {
   if (!row) return null;
   const signal = row.primaryStrategy;
   const canApprove = row.workflowStage === 'trade_ready' && Boolean(row.tradePlan);
-  const canPaperTrade = Boolean(row.tradePlan && row.tradePlan.rr >= 0.5); // matches backend MIN_RR (T1-only target)
+  const canTrade = Boolean(row.tradePlan && row.tradePlan.rr >= 0.5); // matches backend MIN_RR (T1-only target)
   return (
     <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-end">
       <section className="h-full w-full max-w-[720px] bg-[#080b12] border-l border-white/10 shadow-2xl overflow-y-auto">
@@ -948,13 +948,13 @@ function DecisionPanel({
             </button>
             <button
               type="button"
-              disabled={!canPaperTrade || busy}
-              onClick={() => onPaperTrade(row)}
+              disabled={!canTrade || busy}
+              onClick={() => onTrade(row)}
               className="h-11 rounded-xl border border-cyan-500/30 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              title={canPaperTrade ? 'Create simulated paper bracket' : 'Paper trade needs a valid trade plan and R:R >= 1.5'}
+              title={canTrade ? 'Open a live bracket order' : 'Trade needs a valid trade plan and R:R >= 1.5'}
             >
               <ShieldCheck size={15} />
-              <span className="text-[10px] uppercase tracking-widest font-black">Paper</span>
+              <span className="text-[10px] uppercase tracking-widest font-black">Trade</span>
             </button>
             <button
               type="button"
@@ -970,14 +970,14 @@ function DecisionPanel({
   );
 }
 
-function estimatedExitPrice(trade: PaperTrade): number {
+function estimatedExitPrice(trade: Trade): number {
   if (trade.exitPrice && trade.exitPrice !== trade.entry) return trade.exitPrice;
   if (trade.outcome === 'Target') return trade.target;
   if (trade.outcome === 'T1 Profit') return trade.target1 ?? trade.target;
   return trade.stop; // Stop or Manual — worst case: exited at stop level
 }
 
-function PaperTradeMonitor({
+function TradeMonitor({
   trades,
   rows,
   monitorDate,
@@ -987,11 +987,11 @@ function PaperTradeMonitor({
   onFixZeroPnl,
   eodMessage,
 }: {
-  trades: PaperTrade[];
+  trades: Trade[];
   rows: ProTradeRow[];
   monitorDate: string;
   onMonitorDateChange: (date: string) => void;
-  onCloseTrade: (trade: PaperTrade, price: number) => void;
+  onCloseTrade: (trade: Trade, price: number) => void;
   onClearClosed: () => void;
   onFixZeroPnl: () => void;
   eodMessage?: string;
@@ -1007,7 +1007,7 @@ function PaperTradeMonitor({
   const totalPnl = filteredTrades.reduce((total, trade) => {
     if (trade.status === 'Open') return total;
     const pnl = (!trade.pnl || trade.pnl === 0)
-      ? paperPnl(trade, estimatedExitPrice(trade)).pnl
+      ? tradePnl(trade, estimatedExitPrice(trade)).pnl
       : trade.pnl;
     return total + pnl;
   }, 0);
@@ -1017,7 +1017,7 @@ function PaperTradeMonitor({
       <div className="p-3 border-b border-white/5 bg-white/5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="w-1 h-4 bg-cyan-500 rounded-full" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">Paper Trade Monitor</h2>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-200">Trade Monitor</h2>
           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{open.length} open / {closed.length} closed</span>
           <input
             type="date"
@@ -1082,10 +1082,10 @@ function PaperTradeMonitor({
                 ? ((trade.direction === 'BULL' ? current > trade.entry : current < trade.entry) ? 'text-emerald-300' : 'text-rose-300')
                 : 'text-white';
               const livePnl = trade.status === 'Open'
-                ? paperPnl(trade, livePrice)
+                ? tradePnl(trade, livePrice)
                 : {
-                  pnl: trade.pnl && trade.pnl !== 0 ? trade.pnl : paperPnl(trade, closedExitPrice).pnl,
-                  pnlPercent: trade.pnlPercent && trade.pnlPercent !== 0 ? trade.pnlPercent : paperPnl(trade, closedExitPrice).pnlPercent
+                  pnl: trade.pnl && trade.pnl !== 0 ? trade.pnl : tradePnl(trade, closedExitPrice).pnl,
+                  pnlPercent: trade.pnlPercent && trade.pnlPercent !== 0 ? trade.pnlPercent : tradePnl(trade, closedExitPrice).pnlPercent
                 };
               return (
                 <tr key={trade.id} className="border-b border-white/5 hover:bg-white/5">
@@ -1111,11 +1111,11 @@ function PaperTradeMonitor({
                       <span className="text-amber-300">{fmtMoney(trade.exitPrice ?? trade.stop)}</span>
                     )}
                     {trade.status === 'Open' && trade.t1HitAt && (
-                      <div className="text-[9px] text-amber-300 font-black">Trail {fmtMoney(paperTrailingStop(trade))}</div>
+                      <div className="text-[9px] text-amber-300 font-black">Trail {fmtMoney(tradeTrailingStop(trade))}</div>
                     )}
                   </td>
-                  <td className="py-3 px-3 border-r border-white/5 text-right text-cyan-300">{fmtMoney(paperTarget1(trade))}</td>
-                  <td className="py-3 px-3 border-r border-white/5 text-right text-emerald-300">{fmtMoney(paperTarget2(trade))}</td>
+                  <td className="py-3 px-3 border-r border-white/5 text-right text-cyan-300">{fmtMoney(tradeTarget1(trade))}</td>
+                  <td className="py-3 px-3 border-r border-white/5 text-right text-emerald-300">{fmtMoney(tradeTarget2(trade))}</td>
                   <td className="py-3 px-3 border-r border-white/5 text-right text-slate-300 font-mono">
                     {trade.quantity >= 1 ? trade.quantity.toFixed(2) : trade.quantity.toFixed(4)} sh
                   </td>
@@ -1171,7 +1171,7 @@ function PaperTradeMonitor({
           </tbody>
         </table>
         {!filteredTrades.length && (
-          <div className="p-6 text-sm text-slate-500 text-center">{isToday ? 'No paper trades today. Open a ticker review panel and click Paper.' : `No paper trades on ${monitorDate}.`}</div>
+          <div className="p-6 text-sm text-slate-500 text-center">{isToday ? 'No trades today. Open a ticker review panel and click Trade.' : `No trades on ${monitorDate}.`}</div>
         )}
       </div>
     </div>
@@ -1191,7 +1191,7 @@ function ProTradeSettingsPanel({
         <div className="sticky top-0 z-10 bg-[#080b12]/95 border-b border-white/10 p-4 flex items-center justify-between">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-cyan-300 font-black">ProTrade Settings</p>
-            <h3 className="text-lg font-black text-white">Paper Order Controls</h3>
+            <h3 className="text-lg font-black text-white">Order Controls</h3>
           </div>
           <button type="button" onClick={onClose} className="h-9 w-9 rounded-lg border border-white/10 bg-white/5 text-slate-400 hover:text-white">
             <X size={16} className="mx-auto" />
@@ -1275,7 +1275,7 @@ function WatchlistHistoryPanel() {
                 <th className="py-2 px-3 border-r border-white/5">Symbol</th>
                 <th className="py-2 px-3 border-r border-white/5 text-right">Closing Price</th>
                 <th className="py-2 px-3 border-r border-white/5">Outcome</th>
-                <th className="py-2 px-3 text-right">Paper P&amp;L</th>
+                <th className="py-2 px-3 text-right">Trade P&amp;L</th>
               </tr>
             </thead>
             <tbody className="font-mono text-[11px]">
@@ -1501,9 +1501,9 @@ export function ProTradeScannerScreen() {
   const [approvalMessage, setApprovalMessage] = React.useState('');
   const [chartRow, setChartRow] = React.useState<ProTradeRow | null>(null);
   const [chartInterval, setChartInterval] = React.useState<TradingViewInterval>('5');
-  const [paperTrades, setPaperTrades] = React.useState<PaperTrade[]>([]);
-  const paperTradesRef = React.useRef<PaperTrade[]>(paperTrades);
-  React.useEffect(() => { paperTradesRef.current = paperTrades; }, [paperTrades]);
+  const [trades, setTrades] = React.useState<Trade[]>([]);
+  const tradesRef = React.useRef<Trade[]>(trades);
+  React.useEffect(() => { tradesRef.current = trades; }, [trades]);
   const [eodMessage, setEodMessage] = React.useState('');
   const [monitorDate, setMonitorDate] = React.useState<string>(() => todayET());
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -1526,7 +1526,7 @@ export function ProTradeScannerScreen() {
       setSnapshot({ rows, rawRows: rows, filteredRows: [], qualifiedCount: rows.filter(r => r.qualified).length, scannedCount: rows.length, rawCount: rows.length, filteredOut: 0, fetchedAt: (state['fetchedAt'] as string) ?? new Date().toISOString(), universeBuiltAt: (state['universeBuiltAt'] as string | null) ?? null, providerStatus: 'daemon', nifty50Trend5m: (state['nifty50Trend5m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', nifty50Trend15m: (state['nifty50Trend15m'] as 'UP' | 'DOWN' | 'FLAT') ?? 'FLAT', regime: state['regime'] as ProTradeSnapshot['regime'], marketLive: state['marketLive'] as boolean | undefined, marketStatus: state['marketStatus'] as string | undefined, firedToday: state['firedToday'] as string[] | undefined } as ProTradeSnapshot);
     }
     if (state['universeFallback'] !== undefined) setUniverseFallback(state['universeFallback'] as boolean);
-    if (state['trades']) setPaperTrades(state['trades'] as PaperTrade[]);
+    if (state['trades']) setTrades(state['trades'] as Trade[]);
     setDaemonOnline(true);
     setLoading(false);
     setError('');
@@ -1596,21 +1596,21 @@ export function ProTradeScannerScreen() {
         setError('');
       }),
       daemonWs.on('trade_opened', (payload) => {
-        setPaperTrades((prev) => [payload as PaperTrade, ...prev]);
+        setTrades((prev) => [payload as Trade, ...prev]);
         setMonitorDate(todayET());
       }),
       daemonWs.on('trade_closed', (payload) => {
-        const t = payload as PaperTrade;
-        setPaperTrades((prev) => prev.map((x) => x.id === t.id ? t : x));
+        const t = payload as Trade;
+        setTrades((prev) => prev.map((x) => x.id === t.id ? t : x));
       }),
       daemonWs.on('trade_updated', (payload) => {
-        const t = payload as PaperTrade;
-        setPaperTrades((prev) => prev.map((x) => x.id === t.id ? t : x));
+        const t = payload as Trade;
+        setTrades((prev) => prev.map((x) => x.id === t.id ? t : x));
       }),
       daemonWs.on('eod_fired', (payload) => {
         const p = payload as { message: string };
         setEodMessage(p.message);
-        daemonClient.getTrades().then((t) => setPaperTrades(t as PaperTrade[])).catch(() => {});
+        daemonClient.getTrades().then((t) => setTrades(t as Trade[])).catch(() => {});
       }),
       daemonWs.on('risk_update', () => {
         daemonClient.getRisk().then(setRiskData).catch(() => {});
@@ -1622,19 +1622,19 @@ export function ProTradeScannerScreen() {
   const alertedTradeReadyRef = React.useRef<Set<string>>(new Set());
   const pendingConfirmCount = 0; // daemon handles confirmation queue
 
-  const rows = React.useMemo(() => withOrderedStage(snapshot?.rows || [], paperTrades), [snapshot?.rows, paperTrades]);
+  const rows = React.useMemo(() => withOrderedStage(snapshot?.rows || [], trades), [snapshot?.rows, trades]);
   // Symbols blocked from re-entry today because they stopped out.
   // Key = "SYMBOL|STRATEGY|DIRECTION" — only the exact same strategy+direction is blocked.
   // Opposite direction is allowed (failed BULL sweep → BEAR sweep may be the correct read).
-  // Persists across refresh because it is derived from paperTrades (already persisted to server).
+  // Persists across refresh because it is derived from trades (already persisted to server).
   const stoppedTodaySet = React.useMemo(() => {
     const today = todayET();
     return new Set(
-      paperTrades
+      trades
         .filter((t) => tradeDateET(t) === today && t.status === 'Closed' && t.outcome === 'Stop' && t.strategyId)
         .map((t) => `${baseSymbol(t.symbol)}|${t.strategyId}|${t.direction}`)
     );
-  }, [paperTrades]);
+  }, [trades]);
   const rawRows = snapshot?.rawRows || [];
   const proWatchlistRows = rows.filter((row) => row.basePass);
   const stageRows = activeStage === 'screened_universe'
@@ -1650,8 +1650,8 @@ export function ProTradeScannerScreen() {
   const filteredRows = watchlistOnly && watchlist.symbols.length > 0
     ? rows.filter((row) => watchlistSet.has(row.symbol))
     : strategyFilteredRows;
-  const orderedPaperTrades = paperTrades.filter((trade) => baseSymbol(trade.symbol) && (trade.status === 'Open' || trade.status === 'Closed'));
-  const selected = selectedRow ? withOrderedStage([selectedRow], paperTrades)[0] : null;
+  const orderedTrades = trades.filter((trade) => baseSymbol(trade.symbol) && (trade.status === 'Open' || trade.status === 'Closed'));
+  const selected = selectedRow ? withOrderedStage([selectedRow], trades)[0] : null;
   const strategyIds = Object.keys(STRATEGY_LABELS) as StrategyId[];
   const lastUpdated = snapshot?.fetchedAt ? new Date(snapshot.fetchedAt) : null;
   const stale = rows.some((row) => row.dataStatus.stale);
@@ -1703,7 +1703,7 @@ export function ProTradeScannerScreen() {
     if (archive.some((r) => r.date === todayET)) return; // Already archived
     const priceBySymbol = new Map(rows.map((r) => [r.symbol, r.price]));
     const results: WatchlistStockResult[] = watchlist.symbols.map((sym) => {
-      const pt = paperTrades.find((t) => baseSymbol(t.symbol) === sym && t.status !== 'Open');
+      const pt = trades.find((t) => baseSymbol(t.symbol) === sym && t.status !== 'Open');
       return {
         symbol: sym,
         closingPrice: priceBySymbol.get(sym) ?? 0,
@@ -1712,7 +1712,7 @@ export function ProTradeScannerScreen() {
       };
     });
     saveArchive([{ date: todayET, archivedAt: new Date().toISOString(), symbols: watchlist.symbols, results }, ...archive]);
-  }, [rows, watchlist, paperTrades]);
+  }, [rows, watchlist, trades]);
 
   // Auto-advance Monitor date when the page is left open overnight.
   // Only advances if the user was already on today's date and the day rolls over.
@@ -1728,7 +1728,7 @@ export function ProTradeScannerScreen() {
   }, []);
 
   // Daemon handles: trade persistence, monitoring, EOD close, auto-execute, Alpaca sync.
-  // UI role: display + manual paper trade + manual close + watchlist management.
+  // UI role: display + manual trade + manual close + watchlist management.
 
   async function approve(row: ProTradeRow) {
     const plan = effectiveTradePlan(row, settings);
@@ -1746,7 +1746,7 @@ export function ProTradeScannerScreen() {
       setApprovalMessage(`Stale entry: price moved $${(plan.entry - currentPrice).toFixed(2)} past entry — skipped to avoid chasing.`);
       return;
     }
-    const usedNotional = paperTrades.filter(t => t.status === 'Open').reduce((s, t) => s + (t.t1HitAt ? t.notional * 0.5 : t.notional), 0);
+    const usedNotional = trades.filter(t => t.status === 'Open').reduce((s, t) => s + (t.t1HitAt ? t.notional * 0.5 : t.notional), 0);
     if (usedNotional >= accountBalance * 0.65) { setApprovalMessage(`Balance utilization at ${((usedNotional / accountBalance) * 100).toFixed(0)}% — 65% cap reached. Wait for a position to close.`); return; }
     // P3: Earnings warning (manual override allowed, but alert the trader)
     if (row.earningsDays !== null && Math.abs(row.earningsDays) <= 1) {
@@ -1768,7 +1768,7 @@ export function ProTradeScannerScreen() {
       });
       setApprovalMessage(`Alpaca paper bracket submitted: ${order.id.slice(0, 8)} · ${row.symbol} ${order.side.toUpperCase()} ${order.qty} shares`);
       // Refresh snapshot from daemon after manual approve
-      daemonClient.getState().then((s: Record<string, unknown>) => { if (s['trades']) setPaperTrades(s['trades'] as PaperTrade[]); }).catch(() => {});
+      daemonClient.getState().then((s: Record<string, unknown>) => { if (s['trades']) setTrades(s['trades'] as Trade[]); }).catch(() => {});
     } catch (err) {
       setApprovalMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1801,41 +1801,41 @@ export function ProTradeScannerScreen() {
     finally { setRebuildLoading(false); }
   }
 
-  function createPaperTrade(row: ProTradeRow) {
+  function createTrade(row: ProTradeRow) {
     if (riskData?.lossLimitHit) { setApprovalMessage(riskData.lossLimitReason ?? 'Daily loss limit hit'); return; }
     const symbolKey = baseSymbol(row.symbol);
-    if (paperTrades.some((t) => t.status === 'Open' && baseSymbol(t.symbol) === symbolKey)) {
-      setApprovalMessage(`Paper trade already open for ${row.symbol}.`);
+    if (trades.some((t) => t.status === 'Open' && baseSymbol(t.symbol) === symbolKey)) {
+      setApprovalMessage(`Trade already open for ${row.symbol}.`);
       return;
     }
-    setApprovalMessage(`Sending paper trade for ${row.symbol}…`);
-    daemonClient.paperTrade(row.symbol)
+    setApprovalMessage(`Sending trade for ${row.symbol}…`);
+    daemonClient.createTrade(row.symbol)
       .then((trade) => {
-        const t = trade as PaperTrade;
-        setPaperTrades((current) => [t, ...current]);
+        const t = trade as Trade;
+        setTrades((current) => [t, ...current]);
         setMonitorDate(todayET());
         const earningsNote = row.earningsDays !== null && Math.abs(row.earningsDays) <= 1 ? ` ⚠ ${row.earningsStatus}` : '';
-        setApprovalMessage(`Paper trade opened for ${row.symbol}: entry ${fmtMoney(t.entry)}, stop ${fmtMoney(t.stop)}, T1 ${fmtMoney(t.target1)}, T2 ${fmtMoney(t.target2)}.${earningsNote}`);
-        // Mirror to Alpaca
+        setApprovalMessage(`Trade opened for ${row.symbol}: entry ${fmtMoney(t.entry)}, stop ${fmtMoney(t.stop)}, T1 ${fmtMoney(t.target1)}, T2 ${fmtMoney(t.target2)}.${earningsNote}`);
+        // Mirror to Alpaca (dead path — no configured Alpaca keys; kept for parity with the daemon's own bracket order, no-ops today)
         placePaperBracketOrder({ symbol: t.symbol, direction: t.direction === 'BEAR' ? 'BEAR' : 'BULL', entry: t.entry, stop: t.stop, target: t.target, notional: t.notional })
-          .catch((err: unknown) => console.warn('Alpaca paper order skipped:', err instanceof Error ? err.message : err));
+          .catch((err: unknown) => console.warn('Alpaca order skipped:', err instanceof Error ? err.message : err));
       })
-      .catch((err: unknown) => setApprovalMessage(`Paper trade failed: ${err instanceof Error ? err.message : String(err)}`));
+      .catch((err: unknown) => setApprovalMessage(`Trade failed: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   function clearClosedTrades() {
     // Keep open trades locally; daemon clears all — refetch after
-    setPaperTrades((current) => current.filter((t) => t.status === 'Open'));
-    daemonClient.clearTrades().then(() => daemonClient.getOpenTrades().then((t) => setPaperTrades(t as PaperTrade[]))).catch(() => {});
+    setTrades((current) => current.filter((t) => t.status === 'Open'));
+    daemonClient.clearTrades().then(() => daemonClient.getOpenTrades().then((t) => setTrades(t as Trade[]))).catch(() => {});
   }
 
   function fixZeroPnlTrades() {
-    setPaperTrades((current) => current.map((trade) => {
+    setTrades((current) => current.map((trade) => {
       if (trade.status !== 'Closed') return trade;
       // Fix $0 pnl
       if (!trade.pnl || trade.pnl === 0) {
         const exitPrice = estimatedExitPrice(trade);
-        const { pnl, pnlPercent } = paperPnl(trade, exitPrice);
+        const { pnl, pnlPercent } = tradePnl(trade, exitPrice);
         return { ...trade, exitPrice, pnl, pnlPercent };
       }
       // Fix negative T1 Profit — floor exit at trailing stop (stored before the floor fix)
@@ -1844,18 +1844,18 @@ export function ProTradeScannerScreen() {
         const exitPrice = trade.direction === 'BULL'
           ? Math.max(trade.exitPrice ?? ts, ts)
           : Math.min(trade.exitPrice ?? ts, ts);
-        const { pnl, pnlPercent } = paperPnl(trade, exitPrice);
+        const { pnl, pnlPercent } = tradePnl(trade, exitPrice);
         return { ...trade, exitPrice, pnl, pnlPercent };
       }
       return trade;
     }));
   }
 
-  function manualClosePaperTrade(trade: PaperTrade, price: number) {
+  function manualCloseTrade(trade: Trade, price: number) {
     daemonClient.closeTrade(trade.id, price)
       .then((closed) => {
-        const t = closed as PaperTrade;
-        setPaperTrades((current) => current.map((item) => item.id === t.id ? t : item));
+        const t = closed as Trade;
+        setTrades((current) => current.map((item) => item.id === t.id ? t : item));
       })
       .catch((err: unknown) => setApprovalMessage(`Close failed: ${err instanceof Error ? err.message : String(err)}`));
     // Mirror to Alpaca
@@ -1867,7 +1867,7 @@ export function ProTradeScannerScreen() {
       {/* === Trading HUD — critical session metrics === */}
       {(() => {
         const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-        const todayClosed = paperTrades.filter((t) => t.status === 'Closed' && new Date(t.openedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayET);
+        const todayClosed = trades.filter((t) => t.status === 'Closed' && new Date(t.openedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === todayET);
         const todayWins = todayClosed.filter((t) =>
           t.outcome === 'Target' || t.outcome === 'T1 Profit' ||
           ((t.outcome === 'Manual' || t.outcome === 'EOD') && (t.pnl ?? 0) > 0)
@@ -1877,10 +1877,10 @@ export function ProTradeScannerScreen() {
           ((t.outcome === 'Manual' || t.outcome === 'EOD') && (t.pnl ?? 0) <= 0)
         ).length;
         const priceMap = new Map(rows.map((r) => [baseSymbol(r.symbol), r.price]));
-        const openTrades = paperTrades.filter((t) => t.status === 'Open');
+        const openTrades = trades.filter((t) => t.status === 'Open');
         const openPnl = openTrades.reduce((sum, t) => {
           const px = priceMap.get(baseSymbol(t.symbol)) ?? t.entry;
-          return sum + paperPnl(t, px).pnl;
+          return sum + tradePnl(t, px).pnl;
         }, 0);
         const closedPnl = todayClosed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
         const chargesToday = todayClosed.reduce((sum, t) => sum + (t.cost ?? 0), 0);  // realized NSE round-trip charges today
@@ -2042,7 +2042,7 @@ export function ProTradeScannerScreen() {
                 <span className="text-[9px] uppercase tracking-widest text-slate-500 font-black shrink-0">Live:</span>
                 {openTrades.map((t) => {
                   const px = priceMap.get(baseSymbol(t.symbol)) ?? t.entry;
-                  const { pnl } = paperPnl(t, px);
+                  const { pnl } = tradePnl(t, px);
                   const up = pnl >= 0;
                   return (
                     <span key={t.id} className="flex items-center gap-1.5">
@@ -2232,7 +2232,7 @@ export function ProTradeScannerScreen() {
             rows={filteredRows}
             selected={selected}
             reasonMode={activeStage === 'pro_watchlist' && activeStrategy === 'all' ? 'base' : 'strategy'}
-            orderedTrades={activeStage === 'ordered' && activeStrategy === 'all' ? orderedPaperTrades : []}
+            orderedTrades={activeStage === 'ordered' && activeStrategy === 'all' ? orderedTrades : []}
             watchlistSet={watchlistSet}
             accountBalance={accountBalance}
             firedToday={snapshot?.firedToday}
@@ -2241,12 +2241,12 @@ export function ProTradeScannerScreen() {
         </>
       )}
 
-      <PaperTradeMonitor
-        trades={paperTrades}
+      <TradeMonitor
+        trades={trades}
         rows={rows}
         monitorDate={monitorDate}
         onMonitorDateChange={setMonitorDate}
-        onCloseTrade={manualClosePaperTrade}
+        onCloseTrade={manualCloseTrade}
         onClearClosed={clearClosedTrades}
         onFixZeroPnl={fixZeroPnlTrades}
         eodMessage={eodMessage}
@@ -2260,7 +2260,7 @@ export function ProTradeScannerScreen() {
         message={approvalMessage}
         onClose={() => setSelectedRow(null)}
         onApprove={(row) => void approve(row)}
-        onPaperTrade={createPaperTrade}
+        onTrade={createTrade}
         onChart={(row) => {
           setChartInterval('5');
           setChartRow(row);
@@ -2302,7 +2302,7 @@ function isTideBlocked(
   if (nifty50Trend5m === 'FLAT' && strategyId === 'orb_retest') return true;
 
   // S2/S3: block only when BOTH tides oppose self-direction.
-  // One tide opposing → reduce size (handled in buildPaperTrade).
+  // One tide opposing → reduce size (handled in buildTrade).
   // 5m counter + 15m aligned for S2/S3 is an RS signal → full size, never blocked.
   const BOTH_TIDE_BLOCK = new Set(['vwap_pullback', 'rs_continuation', 'flag_break', 'vwap15m_pullback']);
   if (BOTH_TIDE_BLOCK.has(strategyId)) {

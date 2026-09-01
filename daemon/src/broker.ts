@@ -1,5 +1,4 @@
-// Kubera — broker layer (Zerodha Kite, NSE). The old Alpaca seam is gone; function names kept
-// ("paper" prefix and string-shaped fields) so call sites stayed unchanged through the migration.
+// Kubera — broker layer (Zerodha Kite, NSE). This is the live real-money order path.
 
 import * as kite from './kite/kiteBroker';
 
@@ -31,7 +30,7 @@ export interface BrokerPosition {
   unrealized_plpc: string;
 }
 
-export async function getPaperAccount(): Promise<BrokerAccount> {
+export async function getAccount(): Promise<BrokerAccount> {
   const a = await kite.getAccount();
   return {
     equity: String(a.equity),
@@ -42,7 +41,7 @@ export async function getPaperAccount(): Promise<BrokerAccount> {
   };
 }
 
-export async function placePaperBracketOrder(params: BracketParams): Promise<{ id: string; stopId?: string; tpId?: string; error?: string }> {
+export async function placeBracketOrder(params: BracketParams): Promise<{ id: string; stopId?: string; tpId?: string; error?: string }> {
   const r = await kite.placeBracketOrder(params);
   if (!r.ok) throw new Error(r.error ?? 'Kite order failed');
   // Entry placed but SL-M failed → loud warning; caller emergency-flattens the unhedged fill.
@@ -50,21 +49,21 @@ export async function placePaperBracketOrder(params: BracketParams): Promise<{ i
   return { id: r.entryOrderId ?? '', stopId: r.stopOrderId, tpId: r.tpOrderId, error: r.error };
 }
 
-export async function closePaperPosition(symbol: string): Promise<{ avgPrice?: number }> {
+export async function closePosition(symbol: string): Promise<{ avgPrice?: number }> {
   const r = await kite.closePosition(symbol);
   return { avgPrice: r.avgPrice };
 }
 
-export async function closeAllPaperPositions(): Promise<void> {
+export async function closeAllPositions(): Promise<void> {
   const positions = await kite.getPositions();
   await Promise.allSettled(positions.map((p) => kite.closePosition(p.symbol)));
 }
 
-export async function cancelPaperOrder(orderId: string): Promise<void> {
+export async function cancelOrder(orderId: string): Promise<void> {
   await kite.cancelOrder(orderId);
 }
 
-export async function getPaperPositions(): Promise<BrokerPosition[]> {
+export async function getPositions(): Promise<BrokerPosition[]> {
   const positions = await kite.getPositions();
   return positions.map((p) => ({
     symbol: p.symbol,

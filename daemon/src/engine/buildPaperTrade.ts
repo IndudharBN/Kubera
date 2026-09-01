@@ -1,4 +1,4 @@
-import type { PaperTrade } from '../types';
+import type { Trade } from '../types';
 import type { ProTradeRow } from './proTradeScannerApi';
 import { computeNotional, getRiskSettings } from '../riskManager';
 import { betaAdjustedSizingMult } from '../portfolioRisk';
@@ -19,7 +19,7 @@ export function effectiveTradePlan(row: ProTradeRow) {
   return row.tradePlan;
 }
 
-export function availablePaperNotional(trades: PaperTrade[], accountBalance: number): number {
+export function availableNotional(trades: Trade[], accountBalance: number): number {
   const cap = accountBalance * getRiskSettings().deployCapPct;
   const openNotional = trades
     .filter((t) => t.status === 'Open')
@@ -27,9 +27,9 @@ export function availablePaperNotional(trades: PaperTrade[], accountBalance: num
   return Math.max(0, cap - openNotional);
 }
 
-export function canPaperTradeRow(
+export function canTradeRow(
   row: ProTradeRow,
-  trades: PaperTrade[] = [],
+  trades: Trade[] = [],
   accountBalance = 100_000,
 ): boolean {
   const plan = effectiveTradePlan(row);
@@ -37,20 +37,20 @@ export function canPaperTradeRow(
   // ~0.7R-1.0R by construction (reward always < risk for a CLOSE target) — this gate silently
   // rejected every single trade_ready row for a full day before being caught. Matches strategyEngine's
   // MIN_RR, which planFromLevelsT1T2 already gates on when building row.tradePlan in the first place.
-  return Boolean(plan && plan.rr >= 0.5 && availablePaperNotional(trades, accountBalance) > 0);
+  return Boolean(plan && plan.rr >= 0.5 && availableNotional(trades, accountBalance) > 0);
 }
 
-export function buildPaperTrade(
+export function buildTrade(
   row: ProTradeRow,
-  currentTrades: PaperTrade[] = [],
+  currentTrades: Trade[] = [],
   openedAt = new Date().toISOString(),
   accountBalance = 100_000,
   nifty50Trend5m?: 'UP' | 'DOWN' | 'FLAT',
   nifty50Trend15m?: 'UP' | 'DOWN' | 'FLAT',
   cbSizeMult = 1.0,
-): PaperTrade | null {
+): Trade | null {
   const plan = effectiveTradePlan(row);
-  // 0.5 (was 1.5) — same fix as canPaperTradeRow above, same reason.
+  // 0.5 (was 1.5) — same fix as canTradeRow above, same reason.
   if (!plan || plan.rr < 0.5) return null;
 
   const strategyId = row.primaryStrategy?.strategyId ?? null;
@@ -89,7 +89,7 @@ export function buildPaperTrade(
   const sigGroupSizeMult = row.primaryStrategy?.groupSizeMult ?? 1.0;
   const baseNotional = computeNotional(accountBalance, plan.entry, plan.stop, signalGroup, sigGroupSizeMult);
   const adjustedNotional = baseNotional * effectiveMult * cbSizeMult * getRiskSettings().sizeMultiplier;
-  const budgetCap = availablePaperNotional(currentTrades, accountBalance);
+  const budgetCap = availableNotional(currentTrades, accountBalance);
   const notional = Math.min(budgetCap, adjustedNotional);
   if (notional <= 0) return null;
   const quantity = Math.floor(notional / plan.entry); // NSE equity = whole shares only
@@ -113,7 +113,7 @@ export function buildPaperTrade(
     company: row.company,
     strategyId,
     strategyCode: strategyId ? (STRATEGY_CODES[strategyId] ?? 'NA') : 'NA',
-    strategyName: row.primaryStrategy?.strategyName || 'Manual Paper',
+    strategyName: row.primaryStrategy?.strategyName || 'Manual',
     direction: (row.primaryStrategy?.direction ?? row.direction) as 'BULL' | 'BEAR' | 'NEUTRAL',
     status: 'Open',
     outcome: 'Open',

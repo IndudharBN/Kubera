@@ -3,8 +3,8 @@ import { clearUniverseCache } from './engine/proTradeScannerApi';
 import { isUniverseFallback, clearUniverseCache as clearUniverseCacheClient } from './marketData';
 import { barStream } from './barStream';
 import { getState, setState, saveState, applyDayRoll } from './stateStore';
-import { monitorPaperTrades, closePaperTrade } from './engine/monitorTrades';
-import { buildPaperTrade, canPaperTradeRow } from './engine/buildPaperTrade';
+import { monitorTrades, closeTrade } from './engine/monitorTrades';
+import { buildTrade, canTradeRow } from './engine/buildPaperTrade';
 import { isTideBlocked } from './engine/isTideBlocked';
 import { checkGroupCircuitBreaker, checkStrategyCircuitBreaker, checkDailyLossLimit, recordGroupTradeResult, recordTradeResult, updateHwm, checkDrawdownKill, checkDailyProfit, getRiskSettings, initDailyBalance } from './riskManager';
 import { kiteEnv } from './kite/kiteEnv';
@@ -12,11 +12,11 @@ import { getLtp as getKiteLtp } from './kite/kiteClient';
 import { ensureKiteLogin } from './kite/kiteLogin';
 import { isNseHoliday, istDate } from './nse';
 import { checkSectorConcentration, checkPortfolioBeta, checkPortfolioOpenRisk } from './portfolioRisk';
-import { getPaperAccount, getPaperPositions, placePaperBracketOrder, closePaperPosition, cancelPaperOrder, getOrderMap } from './broker';
+import { getAccount, getPositions, placeBracketOrder, closePosition, cancelOrder, getOrderMap } from './broker';
 import { env } from './env';
 import { emit } from './httpServer';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
-import type { PaperTrade } from './types';
+import type { Trade } from './types';
 
 function toETDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -115,7 +115,7 @@ let lastSyncReauthAt = 0; // throttle: don't hammer Kite's login flow every 30s 
 
 async function syncAccount(): Promise<void> {
   try {
-    const account = await getPaperAccount();
+    const account = await getAccount();
     const equity = parseFloat(account.equity);
     if (Number.isFinite(equity)) {
       // Always reflect the REAL Kite equity — even ₹0 (unfunded) — so the executor never sizes
@@ -151,9 +151,9 @@ async function syncAccount(): Promise<void> {
  * completed at the broker, close the internal trade at the real fill price (captures true slippage)
  * rather than inferring the exit from scanned prices. Also catches fills that happened while the
  * daemon was between cycles or restarting. The existing close path then records risk + OCO-cancels
- * the sibling leg. Live (kite + auto-execute) only — a no-op in shadow / paper.
+ * the sibling leg. Live (kite + auto-execute) only — a no-op when auto-execute is off.
  */
-async function reconcileBrokerFills(trades: PaperTrade[]): Promise<PaperTrade[]> {
+async function reconcileBrokerFills(trades: Trade[]): Promise<Trade[]> {
   const open = trades.filter((t) => t.status === 'Open' && (t.stopOrderId || t.tpOrderId));
   if (!open.length) return trades;
   const orderMap = await getOrderMap().catch((e: Error) => {
@@ -174,11 +174,11 @@ async function reconcileBrokerFills(trades: PaperTrade[]): Promise<PaperTrade[]>
     const sl = tt.stopOrderId ? orderMap[tt.stopOrderId] : undefined;
     if (tp && tp.status === 'COMPLETE' && tp.avgPrice > 0) {
       console.log(`[reconcile] ${tt.symbol} TP-LIMIT filled @ ₹${tp.avgPrice} (broker)`);
-      return closePaperTrade(tt, tp.avgPrice, 'Target');
+      return closeTrade(tt, tp.avgPrice, 'Target');
     }
     if (sl && sl.status === 'COMPLETE' && sl.avgPrice > 0) {
       console.log(`[reconcile] ${tt.symbol} SL-M filled @ ₹${sl.avgPrice} (broker)`);
-      return closePaperTrade(tt, sl.avgPrice, tt.t1HitAt ? 'T1 Profit' : 'Stop');
+      return closeTrade(tt, sl.avgPrice, tt.t1HitAt ? 'T1 Profit' : 'Stop');
     }
     return tt;
   });
@@ -203,7 +203,7 @@ async function monitorLoop(): Promise<void> {
     // nothing closed and the price-monitor reports no change, else the entry update is lost each cycle.
     const reconChanged = reconciled.some((t, i) => t !== trades[i]);
 
-    const { trades: updated, changed } = monitorPaperTrades(reconciled, snapshot.rows);
+    const { trades: updated, changed } = monitorTrades(reconciled, snapshot.rows);
     if (!changed && !reconClosed && !reconChanged) return;
 
     // Record closed trades to risk state
@@ -220,18 +220,18 @@ async function monitorLoop(): Promise<void> {
         emit('risk_update', { dailyPnl: getState().riskState.dailyRealizedPnl });
         console.log(`[monitor] ${after.symbol} closed — ${after.outcome} gross=₹${after.pnl?.toFixed(2)} cost=₹${(after.cost ?? 0).toFixed(2)} net=₹${netPnl.toFixed(2)}`);
         // OCO (sequenced to remove the cancel/close race): await the SL-M cancel FIRST,
-        // then square off. closePaperPosition is position-aware (reads live qty), so even
+        // then square off. closePosition is position-aware (reads live qty), so even
         // if the SL-M already filled, the close is a no-op — no double-fill, no orphan.
         // OCO: cancel BOTH resting legs (SL-M + TP-LIMIT) before squaring off, so neither orphans.
         if (after.stopOrderId) {
-          await cancelPaperOrder(after.stopOrderId).catch((err: Error) =>
+          await cancelOrder(after.stopOrderId).catch((err: Error) =>
             console.warn(`[broker] stop cancel failed ${after.symbol}:`, err.message));
         }
         if (after.tpOrderId) {
-          await cancelPaperOrder(after.tpOrderId).catch((err: Error) =>
+          await cancelOrder(after.tpOrderId).catch((err: Error) =>
             console.warn(`[broker] TP cancel failed ${after.symbol}:`, err.message));
         }
-        await closePaperPosition(after.symbol).catch((err: Error) =>
+        await closePosition(after.symbol).catch((err: Error) =>
           console.warn(`[broker] position close failed ${after.symbol}:`, err.message),
         );
       }
@@ -427,9 +427,9 @@ async function tryFireTradesInner(): Promise<void> {
       continue;
     }
 
-    if (!canPaperTradeRow(row, trades, accountBalance)) continue;
+    if (!canTradeRow(row, trades, accountBalance)) continue;
 
-    const newTrade = buildPaperTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.nifty50Trend5m, snapshot.nifty50Trend15m, sizeMult);
+    const newTrade = buildTrade(row, trades, new Date().toISOString(), accountBalance, snapshot.nifty50Trend5m, snapshot.nifty50Trend15m, sizeMult);
     if (!newTrade) continue;
 
     const betaCheck = checkPortfolioBeta(
@@ -496,9 +496,9 @@ async function tryFireTradesInner(): Promise<void> {
       saveState();
     }
 
-    // Submit bracket order to Alpaca paper account — async, does not block executor
+    // Submit bracket order to Kite — async, does not block executor
     if (newTrade.direction !== 'NEUTRAL') {
-      placePaperBracketOrder({
+      placeBracketOrder({
         symbol: newTrade.symbol,
         direction: newTrade.direction as 'BULL' | 'BEAR',
         entry: newTrade.entry,
@@ -519,10 +519,10 @@ async function tryFireTradesInner(): Promise<void> {
         if (order.error && !order.stopId) {
           console.error(`[broker] ${newTrade.symbol} UNHEDGED — SL-M failed; emergency-flattening the entry`);
           emit('alert', { level: 'error', symbol: newTrade.symbol, message: 'SL-M failed — emergency flat' });
-          if (order.tpId) await cancelPaperOrder(order.tpId).catch(() => {});
+          if (order.tpId) await cancelOrder(order.tpId).catch(() => {});
           // Record the flatten at REAL fills (entry avg + square-off avg), not the plan price — the
           // old newTrade.entry/entry bookkeeping logged pnl=0 on a leg that really lost money.
-          const closeRes = await closePaperPosition(newTrade.symbol).catch((e: Error) => {
+          const closeRes = await closePosition(newTrade.symbol).catch((e: Error) => {
             console.warn(`[broker] emergency close failed ${newTrade.symbol}:`, e.message);
             return {} as { avgPrice?: number };
           });
@@ -531,7 +531,7 @@ async function tryFireTradesInner(): Promise<void> {
           const exitPx = (closeRes.avgPrice && closeRes.avgPrice > 0) ? closeRes.avgPrice : realEntry;
           const ts2 = loadTrades();
           const j = ts2.findIndex((t: { id: string }) => t.id === newTrade.id);
-          if (j !== -1) { ts2[j] = closePaperTrade({ ...ts2[j], entry: realEntry }, exitPx, 'Manual'); saveTrades(ts2); emit('trade_closed', ts2[j]); }
+          if (j !== -1) { ts2[j] = closeTrade({ ...ts2[j], entry: realEntry }, exitPx, 'Manual'); saveTrades(ts2); emit('trade_closed', ts2[j]); }
         }
       }).catch((err: Error) => {
         // Entry rejected at the broker (margin / circuit / ASM / connectivity) → roll back the
@@ -569,13 +569,13 @@ async function eodClose(): Promise<void> {
   if (open.length) {
     // OCO: cancel every resting SL-M AND TP-LIMIT BEFORE the square-off so none can orphan.
     const restingIds = open.flatMap((t) => [t.stopOrderId, t.tpOrderId]).filter((id): id is string => Boolean(id));
-    await Promise.allSettled(restingIds.map((id) => cancelPaperOrder(id)));
+    await Promise.allSettled(restingIds.map((id) => cancelOrder(id)));
 
     // Square off per SYMBOL (net) and capture the REAL fill price, so EOD P&L reflects the actual
     // broker exit — not an estimated snapshot price (which was over-stating the dashboard P&L).
     const exitFill = new Map<string, number>();
     for (const sym of [...new Set(open.map((t) => t.symbol))]) {
-      const r = await closePaperPosition(sym).catch((e: Error) => { console.warn(`[eod] close failed ${sym}:`, e.message); return {} as { avgPrice?: number }; });
+      const r = await closePosition(sym).catch((e: Error) => { console.warn(`[eod] close failed ${sym}:`, e.message); return {} as { avgPrice?: number }; });
       if (r.avgPrice && r.avgPrice > 0) exitFill.set(sym, r.avgPrice);
     }
     console.log(`[eod] squared off ${exitFill.size}/${new Set(open.map((t) => t.symbol)).size} symbols at real fills`);
@@ -587,7 +587,7 @@ async function eodClose(): Promise<void> {
       if (t.status !== 'Open') return t;
       const exit = exitFill.get(t.symbol) ?? snapPrice.get(t.symbol) ?? t.entry;
       const gross = t.direction === 'BEAR' ? (t.entry - exit) * t.quantity : (exit - t.entry) * t.quantity;
-      const closed: PaperTrade = {
+      const closed: Trade = {
         ...t,
         status: 'Closed',
         outcome: 'EOD',

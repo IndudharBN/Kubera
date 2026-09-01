@@ -5,7 +5,7 @@ import { env } from './env';
 import { loadTrades, saveTrades, appendLedger } from './tradeStore';
 import { getState, setState, saveState } from './stateStore';
 import { getCurrentSnapshot, runFullScan } from './scanLoop';
-import { getPaperAccount, placePaperBracketOrder, closePaperPosition, cancelPaperOrder } from './broker';
+import { getAccount, placeBracketOrder, closePosition, cancelOrder } from './broker';
 import {
   checkDailyLossLimit,
   getGroupCbSummary,
@@ -14,8 +14,8 @@ import {
   saveRiskSettings,
 } from './riskManager';
 import { getUniverseBuiltAt, isUniverseFallback, clearUniverseCache } from './marketData';
-import { closePaperTrade } from './engine/monitorTrades';
-import type { PaperTrade } from './types';
+import { closeTrade } from './engine/monitorTrades';
+import type { Trade } from './types';
 import type { SignalGroup, RiskSettings } from './types';
 
 // ── WebSocket broadcast ────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ app.get('/api/trades/open', (_req, res) => {
 // GET /api/risk
 app.get('/api/risk', async (_req, res) => {
   try {
-    const account = await getPaperAccount();
+    const account = await getAccount();
     const balance = parseFloat(account.equity);
     res.json(riskSnapshot(balance));
   } catch {
@@ -166,7 +166,7 @@ app.post('/api/risk/settings', (req, res) => {
 // GET /api/account
 app.get('/api/account', async (_req, res) => {
   try {
-    const account = await getPaperAccount();
+    const account = await getAccount();
     res.json({ equity: parseFloat(account.equity), buyingPower: parseFloat(account.buying_power) });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
@@ -190,8 +190,8 @@ app.post('/api/watchlist', (req, res) => {
   res.json({ ok: true, symbols });
 });
 
-// POST /api/trades/paper — manual paper trade
-app.post('/api/trades/paper', (req, res) => {
+// POST /api/trades/manual — manually open a trade
+app.post('/api/trades/manual', (req, res) => {
   const { rowSymbol } = req.body as { rowSymbol: string };
   const snapshot = getCurrentSnapshot();
   if (!snapshot) return res.status(503).json({ error: 'No snapshot available' });
@@ -212,7 +212,7 @@ app.post('/api/trades/paper', (req, res) => {
   const quantity = Math.round((rawNotional / plan.entry) * 10000) / 10000;
   if (quantity <= 0) return res.status(422).json({ error: 'Computed quantity is zero' });
 
-  const trade: PaperTrade = {
+  const trade: Trade = {
     id: `paper-${row.symbol}-${Date.now()}-manual`,
     symbol: row.symbol,
     company: row.company,
@@ -241,7 +241,7 @@ app.post('/api/trades/paper', (req, res) => {
   trades.push(trade);
   saveTrades(trades);
   emit('trade_opened', trade);
-  placePaperBracketOrder({
+  placeBracketOrder({
     symbol: trade.symbol,
     direction: trade.direction as 'BULL' | 'BEAR',
     entry: trade.entry,
@@ -253,7 +253,7 @@ app.post('/api/trades/paper', (req, res) => {
     const idx = ts.findIndex((t) => t.id === trade.id);
     if (idx !== -1) { ts[idx] = { ...ts[idx], alpacaOrderId: order.id, stopOrderId: order.stopId }; saveTrades(ts); }
     console.log(`[broker] manual order placed ${trade.symbol} entry=${order.id} stop=${order.stopId ?? 'n/a'}`);
-  }).catch((err: Error) => console.warn(`[alpaca] manual order failed ${trade.symbol}:`, err.message));
+  }).catch((err: Error) => console.warn(`[broker] manual order failed ${trade.symbol}:`, err.message));
   res.json(trade);
 });
 
@@ -267,12 +267,12 @@ app.post('/api/trades/:id/close', (req, res) => {
   if (trades[idx].status === 'Closed') return res.status(422).json({ error: 'Trade already closed' });
 
   const price = exitPrice ?? trades[idx].entry;
-  const closed = closePaperTrade(trades[idx], price, 'Manual');
+  const closed = closeTrade(trades[idx], price, 'Manual');
   trades[idx] = closed;
   saveTrades(trades);
   emit('trade_closed', closed);
-  if (closed.stopOrderId) cancelPaperOrder(closed.stopOrderId).catch(() => {}); // OCO: kill the resting stop
-  closePaperPosition(closed.symbol).catch(() => {});
+  if (closed.stopOrderId) cancelOrder(closed.stopOrderId).catch(() => {}); // OCO: kill the resting stop
+  closePosition(closed.symbol).catch(() => {});
   res.json(closed);
 });
 

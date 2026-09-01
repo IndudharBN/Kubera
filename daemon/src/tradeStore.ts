@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { PaperTrade } from './types';
+import type { Trade } from './types';
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const TRADES_FILE = path.join(DATA_DIR, 'trades.json');
@@ -11,15 +11,15 @@ const LEDGER_FILE = path.join(DATA_DIR, 'trade-ledger.jsonl');
 // never rewritten. Every trade lifecycle event is appended here, so even if
 // trades.json is cleared or corrupted, the full history can be reconstructed.
 
-export function loadTrades(): PaperTrade[] {
+export function loadTrades(): Trade[] {
   try {
-    return JSON.parse(fs.readFileSync(TRADES_FILE, 'utf-8')) as PaperTrade[];
+    return JSON.parse(fs.readFileSync(TRADES_FILE, 'utf-8')) as Trade[];
   } catch {
     return [];
   }
 }
 
-export function saveTrades(trades: PaperTrade[]): void {
+export function saveTrades(trades: Trade[]): void {
   // Anti-wipe guard: never silently replace a populated file with an empty one.
   // A clear/bad-write first snapshots the existing trades to a timestamped backup
   // so an accidental "clear history" can always be undone.

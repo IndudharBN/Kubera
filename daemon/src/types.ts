@@ -16,7 +16,7 @@ export type StrategyId =
 
 export type SignalGroup = 'GOLD' | 'BLUE' | 'TREND' | 'FVG' | 'BREAKOUT' | 'PULLBACK' | 'MOMENTUM' | 'SIDEWAYS' | 'UNCLASSIFIED';
 
-export interface PaperTrade {
+export interface Trade {
   id: string;
   symbol: string;
   company: string;

@@ -6,7 +6,7 @@ import { getPaperAccount } from '../lib/alpacaBroker';
 import { STRATEGY_LABELS, STRATEGY_CODES, type StrategyId } from '../features/protrade/workflowTypes';
 import { env, hasAlpacaConfig } from '../lib/env';
 
-interface PaperTradeRecord {
+interface TradeRecord {
   id: string;
   symbol: string;
   strategyId: StrategyId | null;
@@ -35,7 +35,7 @@ interface DayStats {
   losses: number;
   bestTrade: number;
   worstTrade: number;
-  tradeList: PaperTradeRecord[];
+  tradeList: TradeRecord[];
 }
 
 interface EquityPoint {
@@ -55,8 +55,8 @@ function toETDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 }
 
-function usePaperStats() {
-  const [trades, setTrades] = React.useState<PaperTradeRecord[]>([]);
+function useTradeStats() {
+  const [trades, setTrades] = React.useState<TradeRecord[]>([]);
   const [disabledStrategies, setDisabledStrategies] = React.useState<string[]>([]);
   React.useEffect(() => {
     // One-shot fetch on mount silently stuck this tab on empty/stale data whenever the daemon
@@ -65,7 +65,7 @@ function usePaperStats() {
     // on its own instead of requiring a manual page reload.
     const load = () => {
       daemonClient.getTrades()
-        .then((merged) => { if (Array.isArray(merged)) setTrades(merged as PaperTradeRecord[]); })
+        .then((merged) => { if (Array.isArray(merged)) setTrades(merged as TradeRecord[]); })
         .catch(() => {});
       daemonClient.getRiskSettings()
         .then((s) => setDisabledStrategies(s.disabledStrategies ?? []))
@@ -78,9 +78,9 @@ function usePaperStats() {
 
   // Win = structural target/T1, OR a green day-close (EOD flat that finished net-positive after costs).
   // Loss = structural stop, OR a red EOD close. Break-even EOD (net 0) and Manual closes stay excluded.
-  const netOf = (t: PaperTradeRecord) => (t.pnl ?? 0) - (t.cost ?? 0);
-  const isWin = (t: PaperTradeRecord) => t.outcome === 'Target' || t.outcome === 'T1 Profit' || (t.outcome === 'EOD' && netOf(t) > 0);
-  const isLoss = (t: PaperTradeRecord) => t.outcome === 'Stop' || (t.outcome === 'EOD' && netOf(t) < 0);
+  const netOf = (t: TradeRecord) => (t.pnl ?? 0) - (t.cost ?? 0);
+  const isWin = (t: TradeRecord) => t.outcome === 'Target' || t.outcome === 'T1 Profit' || (t.outcome === 'EOD' && netOf(t) > 0);
+  const isLoss = (t: TradeRecord) => t.outcome === 'Stop' || (t.outcome === 'EOD' && netOf(t) < 0);
 
   const closed = trades.filter((t) => t.status === 'Closed');
   const open = trades.filter((t) => t.status === 'Open');
@@ -130,7 +130,7 @@ function usePaperStats() {
   }
 
   // ── Calendar data ───────────────────────────────────────────────────────────
-  const dayMap = new Map<string, PaperTradeRecord[]>();
+  const dayMap = new Map<string, TradeRecord[]>();
   for (const t of closed) {
     if (!t.closedAt) continue;
     const date = toETDate(t.closedAt);
@@ -482,7 +482,7 @@ function PnlCalendar({ dayStatsMap }: { dayStatsMap: Map<string, DayStats> }) {
 // ── PerformanceScreen ─────────────────────────────────────────────────────────
 
 export function PerformanceScreen() {
-  const stats = usePaperStats();
+  const stats = useTradeStats();
 
   const summaryCards = [
     { label: "Today's Net P&L", value: fmtPnl(stats.todayNetPnl), sub: `${stats.todayClosed.length} trades · ${fmtPnl(stats.todayPnl)} gross − ₹${stats.todayCost.toFixed(0)} cost`, color: pnlColor(stats.todayNetPnl) },
@@ -520,8 +520,8 @@ export function PerformanceScreen() {
       {stats.totalTrades === 0 ? (
         <div className="glass p-8 rounded-xl flex flex-col items-center justify-center gap-3">
           <AlertTriangle size={24} className="text-amber-500/60" />
-          <p className="text-sm font-bold text-slate-400">No paper trades yet</p>
-          <p className="text-xs text-slate-500">Go to Pro Tab → find a Trade Ready signal → click Paper Trade</p>
+          <p className="text-sm font-bold text-slate-400">No trades yet</p>
+          <p className="text-xs text-slate-500">Go to Pro Tab → find a Trade Ready signal → click Trade</p>
         </div>
       ) : (
         <>
@@ -536,7 +536,7 @@ export function PerformanceScreen() {
         <div className="col-span-2 space-y-5">
           <div className="glass p-5 rounded-xl">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2 mb-4">
-                <BarChart size={14} className="text-indigo-400" />Strategy P&L (Paper)
+                <BarChart size={14} className="text-indigo-400" />Strategy P&L
               </h3>
               <table className="w-full text-left border-collapse">
                 <thead className="text-[9px] uppercase text-slate-500 font-bold tracking-widest bg-white/5">

@@ -8,7 +8,7 @@ import type { Candle, CandleSet } from '../engine/ohlcv';
 import { closes, last } from '../engine/ohlcv';
 import { ema } from '../engine/indicators';
 import { buildRowFromAlpaca, candleTrend } from '../engine/proTradeScannerApi';
-import { buildPaperTrade } from '../engine/buildPaperTrade';
+import { buildTrade } from '../engine/buildPaperTrade';
 import { classifyMarketRegime } from '../engine/marketRegimeLogic';
 import { ensureKiteLogin } from '../kite/kiteLogin';
 import { loadInstruments, getCandles, getCandlesByToken, INDEX_TOKENS } from '../kite/kiteClient';
@@ -143,7 +143,7 @@ async function main(): Promise<void> {
     if (!row.primaryStrategy || !regimeAllows(row.primaryStrategy.strategyId, regime.regime)) continue;
     const vixMult = vixLevel !== null && vixLevel > 30 ? 0 : vixLevel !== null && vixLevel > 20 ? 0.5 : 1;
     if (vixMult === 0) continue;
-    const t = buildPaperTrade(row, [], iso, 100_000, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
+    const t = buildTrade(row, [], iso, 100_000, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
     if (!t) continue;
     nTrade++;
   }

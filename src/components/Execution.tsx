@@ -3,7 +3,7 @@ import { TrendingDown, TrendingUp, RefreshCcw } from 'lucide-react';
 import { daemonClient } from '../lib/daemonClient';
 import type { Order, Position } from '../types';
 
-interface PaperTrade {
+interface Trade {
   id: string;
   symbol: string;
   strategyCode: string;
@@ -45,7 +45,7 @@ function toISTTime(iso: string) {
 function KitePositionsScreen() {
   const [equity, setEquity] = React.useState<number | null>(null);
   const [buyingPower, setBuyingPower] = React.useState<number | null>(null);
-  const [open, setOpen] = React.useState<PaperTrade[]>([]);
+  const [open, setOpen] = React.useState<Trade[]>([]);
   const [priceBySymbol, setPriceBySymbol] = React.useState<Record<string, number>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
@@ -62,7 +62,7 @@ function KitePositionsScreen() {
         daemonClient.getState().catch(() => ({} as Record<string, unknown>)),
       ]);
       if (acct) { setEquity(acct.equity); setBuyingPower(acct.buyingPower); }
-      setOpen(openTrades as PaperTrade[]);
+      setOpen(openTrades as Trade[]);
       const rows = (state?.rows as Array<{ symbol: string; price: number }>) ?? [];
       const map: Record<string, number> = {};
       for (const r of rows) map[r.symbol.toUpperCase()] = r.price;
@@ -185,13 +185,13 @@ function todayIST(): string {
 
 function KiteOrdersScreen() {
   const [date, setDate] = React.useState<string>(() => todayIST());
-  const [trades, setTrades] = React.useState<PaperTrade[]>([]);
+  const [trades, setTrades] = React.useState<Trade[]>([]);
   const [loadingTrades, setLoadingTrades] = React.useState(true);
   const [filter, setFilter] = React.useState<'all' | 'open' | 'closed'>('all');
 
   React.useEffect(() => {
     setLoadingTrades(true);
-    void daemonClient.getTrades(date).then((result) => { setTrades(result as PaperTrade[]); setLoadingTrades(false); })
+    void daemonClient.getTrades(date).then((result) => { setTrades(result as Trade[]); setLoadingTrades(false); })
       .catch(() => setLoadingTrades(false));
   }, [date]);
 

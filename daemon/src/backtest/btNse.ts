@@ -1,7 +1,7 @@
 // Kubera — NSE backtest harness (Route A, Yahoo .NS data).
 //
 // Replays historical bars through the REAL daemon engine (buildRowFromAlpaca →
-// buildPaperTrade → monitorPaperTrades) with NO strategy-logic changes. A Date mock
+// buildTrade → monitorTrades) with NO strategy-logic changes. A Date mock
 // makes the engine's internal time-gates evaluate at each historical bar. P&L is net
 // of the NSE intraday cost model. Output = per-strategy + per-tier grade table.
 //
@@ -16,11 +16,11 @@ import type { Candle, CandleSet } from '../engine/ohlcv';
 import { closes, last } from '../engine/ohlcv';
 import { ema, sessionVwap } from '../engine/indicators';
 import { buildRowFromAlpaca, candleTrend } from '../engine/proTradeScannerApi';
-import { monitorPaperTrades } from '../engine/monitorTrades';
-import { buildPaperTrade } from '../engine/buildPaperTrade';
+import { monitorTrades } from '../engine/monitorTrades';
+import { buildTrade } from '../engine/buildPaperTrade';
 import { classifyMarketRegime } from '../engine/marketRegimeLogic';
 import { nseRoundTripCost, nseSessionVolumeFraction } from '../nse';
-import type { PaperTrade } from '../types';
+import type { Trade } from '../types';
 import { ensureKiteLogin } from '../kite/kiteLogin';
 import { loadInstruments, getCandles, getCandlesByToken, INDEX_TOKENS } from '../kite/kiteClient';
 import { getRiskSettings } from '../riskManager';
@@ -37,7 +37,7 @@ const ONLY = process.env['BT_ONLY'] ?? ''; // if set, grade ONLY this strategyId
 // not a parallel code path — but writes data/daemon-state.json, so this must NOT run concurrently
 // with the live daemon (isolation is enforced by the operator, same as the rest of this harness).
 const ALL_STRATEGIES_FLAG = process.env['BT_ALL_STRATEGIES'] === 'true';
-// position sizing now lives in DEFAULT_RISK_SETTINGS.sizeMultiplier (applied in buildPaperTrade),
+// position sizing now lives in DEFAULT_RISK_SETTINGS.sizeMultiplier (applied in buildTrade),
 // so the backtest mirrors live exactly. To sweep, change that setting.
 const KITE_DAYS: Record<string, number> = { '1m': 40, '5m': 60, '15m': 60, '1h': 60, '1d': 400 };
 const YH_RANGE: Record<string, string> = { '1m': '5d', '5m': '1mo', '15m': '1mo', '1h': '1mo', '1d': '1y' };
@@ -208,14 +208,14 @@ async function main(): Promise<void> {
     // FULL-UNLOCK: every strategy that reaches a tradePlan takes its OWN slot (one open position per
     // strategy per symbol, concurrent), so all 14 get a real per-strategy track record — not just the
     // single top signal. Portfolio caps + regime routing are intentionally OFF here to grade raw edge.
-    let openTrades: PaperTrade[] = [];
+    let openTrades: Trade[] = [];
     const perStratDay = new Map<string, number>();          // `${strategyId}|${day}` → entries today
     let entered = 0;
     // Moving pointers: iso advances monotonically, so instead of re-filtering each whole array per
     // bar (O(n)/bar — the 10k-bar 1m array was the killer), advance a pointer (amortized O(n) total).
     let pOne = 0, pFif = 0, pH1 = 0, pNF = 0, pNFif = 0, pNH1 = 0;
 
-    const recordClose = (t: PaperTrade, eodPrice: number | null) => {
+    const recordClose = (t: Trade, eodPrice: number | null) => {
       const gross = eodPrice === null
         ? (t.pnl ?? 0)
         : (t.direction === 'BEAR' ? (t.entry - eodPrice) * t.quantity : (eodPrice - t.entry) * t.quantity);
@@ -242,8 +242,8 @@ async function main(): Promise<void> {
       if (openTrades.length) {
         const sessVwap = sessionVwap(five.slice(Math.max(0, i - 78), i + 1)) || bar.close;
         const monRows = [{ symbol: sym, price: bar.close, vwap: sessVwap } as never];
-        const { trades: upd } = monitorPaperTrades(openTrades, monRows as never);
-        const stillOpen: PaperTrade[] = [];
+        const { trades: upd } = monitorTrades(openTrades, monRows as never);
+        const stillOpen: Trade[] = [];
         for (const t of upd) { if (t.status === 'Closed') recordClose(t, null); else stillOpen.push(t); }
         openTrades = stillOpen;
       }
@@ -338,12 +338,12 @@ async function main(): Promise<void> {
         const dk = `${s.strategyId}|${day}`;
         if ((perStratDay.get(dk) ?? 0) >= 3) continue;
         const sigRow = { ...row, primaryStrategy: s, tradePlan: s.tradePlan, direction: s.direction };
-        const t = buildPaperTrade(sigRow, openTrades, iso, ACCOUNT, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
+        const t = buildTrade(sigRow, openTrades, iso, ACCOUNT, nifty50Trend5m, nifty50Trend15m, vixMult * regime.sizeMult);
         if (!t) {
           if (diagBuildFailSample < 5) {
             diagBuildFailSample++;
             const risk = Math.abs(s.tradePlan!.entry - s.tradePlan!.stop);
-            console.log(`[diag] buildPaperTrade null: ${sym} ${s.strategyId} plan.rr=${s.tradePlan!.rr} entry=${s.tradePlan!.entry} stop=${s.tradePlan!.stop} risk=${risk} group=${s.signalGroup ?? 'UNCLASSIFIED'}`);
+            console.log(`[diag] buildTrade null: ${sym} ${s.strategyId} plan.rr=${s.tradePlan!.rr} entry=${s.tradePlan!.entry} stop=${s.tradePlan!.stop} risk=${risk} group=${s.signalGroup ?? 'UNCLASSIFIED'}`);
           }
           continue;
         }

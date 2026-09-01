@@ -108,8 +108,8 @@ export const daemonClient = {
   setWatchlist: (symbols: string[]) =>
     post<{ ok: boolean; symbols: string[] }>('/api/watchlist', { symbols }),
 
-  paperTrade: (rowSymbol: string) =>
-    post<unknown>('/api/trades/paper', { rowSymbol }),
+  createTrade: (rowSymbol: string) =>
+    post<unknown>('/api/trades/manual', { rowSymbol }),
 
   closeTrade: (id: string, exitPrice?: number) =>
     post<unknown>(`/api/trades/${id}/close`, exitPrice !== undefined ? { exitPrice } : {}),

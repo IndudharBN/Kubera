@@ -1,11 +1,11 @@
-import type { PaperTrade } from '../types';
+import type { Trade } from '../types';
 import type { ProTradeRow } from './proTradeScannerApi';
 
 function baseSymbol(symbol: string): string {
   return symbol.replace(/\s+\d+\/\d+.*$/, '').trim().toUpperCase();
 }
 
-function paperPnl(trade: PaperTrade, exitPrice: number) {
+function tradePnl(trade: Trade, exitPrice: number) {
   const gross = trade.direction === 'BEAR'
     ? (trade.entry - exitPrice) * trade.quantity
     : (exitPrice - trade.entry) * trade.quantity;
@@ -15,13 +15,13 @@ function paperPnl(trade: PaperTrade, exitPrice: number) {
   };
 }
 
-export function closePaperTrade(
-  trade: PaperTrade,
+export function closeTrade(
+  trade: Trade,
   exitPrice: number,
-  outcome: PaperTrade['outcome'],
+  outcome: Trade['outcome'],
   closedAt = new Date().toISOString(),
-): PaperTrade {
-  const result = paperPnl(trade, exitPrice);
+): Trade {
+  const result = tradePnl(trade, exitPrice);
   return {
     ...trade,
     status: 'Closed',
@@ -33,22 +33,22 @@ export function closePaperTrade(
   };
 }
 
-function paperTarget1(trade: PaperTrade) {
+function tradeTarget1(trade: Trade) {
   return Number(trade.target1 || trade.target || 0);
 }
 
-function paperTarget2(trade: PaperTrade) {
-  return Number(trade.target2 || trade.target || paperTarget1(trade));
+function tradeTarget2(trade: Trade) {
+  return Number(trade.target2 || trade.target || tradeTarget1(trade));
 }
 
-function paperTrailingStop(trade: PaperTrade) {
+function tradeTrailingStop(trade: Trade) {
   return Number(trade.trailingStop || trade.stop || 0);
 }
 
-export function monitorPaperTrades(
-  trades: PaperTrade[],
+export function monitorTrades(
+  trades: Trade[],
   rows: ProTradeRow[],
-): { trades: PaperTrade[]; changed: boolean } {
+): { trades: Trade[]; changed: boolean } {
   const priceBySymbol = new Map(rows.map((row) => [baseSymbol(row.symbol), row.price]));
   const vwapBySymbol = new Map(rows.map((row) => [baseSymbol(row.symbol), row.vwap]));
   let changed = false;
@@ -60,16 +60,16 @@ export function monitorPaperTrades(
     const current = priceBySymbol.get(baseSymbol(trade.symbol));
     if (!current) return trade;
 
-    const target1 = paperTarget1(trade);
-    const target2 = paperTarget2(trade);
-    const trailingStop = paperTrailingStop(trade);
+    const target1 = tradeTarget1(trade);
+    const target2 = tradeTarget2(trade);
+    const trailingStop = tradeTrailingStop(trade);
     const hitTarget2 = trade.direction === 'BEAR' ? current <= target2 : current >= target2;
     const hitT1 = trade.direction === 'BEAR' ? current <= target1 : current >= target1;
     const hitStop = trade.direction === 'BEAR' ? current >= trailingStop : current <= trailingStop;
 
     if (hitTarget2) {
       changed = true;
-      return closePaperTrade(trade, target2, 'Target');
+      return closeTrade(trade, target2, 'Target');
     }
     // Ratchet ladder (stop moves UP only, never down):
     //  • T1 (1.5R) reached → stop to BREAKEVEN (free trade; full size still runs to T2).
@@ -113,13 +113,13 @@ export function monitorPaperTrades(
       const exitPrice = trade.t1HitAt
         ? (trade.direction === 'BEAR' ? Math.min(trailingStop, current) : Math.max(trailingStop, current))
         : current;
-      return closePaperTrade(trade, exitPrice, trade.t1HitAt ? 'T1 Profit' : 'Stop');
+      return closeTrade(trade, exitPrice, trade.t1HitAt ? 'T1 Profit' : 'Stop');
     }
     if ((trade.strategyId === 'vwap_pullback' || trade.strategyId === 'rs_continuation') && !trade.t1HitAt) {
       const vwap = vwapBySymbol.get(baseSymbol(trade.symbol));
       if (vwap && (trade.direction === 'BULL' ? current < vwap : current > vwap)) {
         changed = true;
-        return closePaperTrade(trade, current, 'Stop');
+        return closeTrade(trade, current, 'Stop');
       }
     }
     return trade;
